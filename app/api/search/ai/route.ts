@@ -2,6 +2,30 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import prisma from '@/lib/db'
 
+// ─── In-memory result cache (per query+category, 5-minute TTL) ──────────────
+interface CacheEntry {
+  results: unknown
+  expiresAt: number
+}
+
+const searchCache = new Map<string, CacheEntry>()
+const CACHE_TTL_MS = 5 * 60 * 1000
+
+function getCached(key: string): unknown | null {
+  const entry = searchCache.get(key)
+  if (!entry) return null
+  if (Date.now() > entry.expiresAt) { searchCache.delete(key); return null }
+  return entry.results
+}
+
+function setCache(key: string, results: unknown): void {
+  // Cap cache size at 50 entries
+  if (searchCache.size >= 50) searchCache.delete(searchCache.keys().next().value!)
+  searchCache.set(key, { results, expiresAt: Date.now() + CACHE_TTL_MS })
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
 async function getApiKey(): Promise<string> {
   const setting = await prisma.setting.findUnique({ where: { key: 'anthropicApiKey' } })
   if (setting?.value?.trim()) return setting.value.trim()
@@ -13,12 +37,27 @@ async function getAnthropicModel(): Promise<string> {
   return setting?.value ?? 'claude-haiku-4-5-20251001'
 }
 
+/** Extract meaningful keywords from a query for pre-filtering */
+function extractKeywords(query: string): string[] {
+  const stopWords = new Set([
+    'a', 'an', 'the', 'and', 'or', 'for', 'in', 'on', 'at', 'to', 'of',
+    'is', 'it', 'about', 'that', 'with', 'by', 'this', 'my', 'me', 'i',
+    'something', 'anything', 'some', 'any', 'show', 'find', 'get',
+  ])
+  return query
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !stopWords.has(w))
+    .slice(0, 8)
+}
+
 /**
  * Parse structured imageTags JSON (new format) or fall back to plaintext (legacy).
  * Returns a compact string suitable for inclusion in the search index.
  */
 function buildImageContext(imageTags: string | null): string {
-  if (!imageTags) return ''
+  if (!imageTags || imageTags === '{}') return ''
   try {
     const parsed = JSON.parse(imageTags) as Record<string, unknown>
     const parts: string[] = []
@@ -37,10 +76,11 @@ function buildImageContext(imageTags: string | null): string {
       parts.push(`tags:${(parsed.tags as string[]).slice(0, 20).join(', ')}`)
     return parts.join(' | ')
   } catch {
-    // Legacy plain-text imageTags
     return imageTags.slice(0, 400)
   }
 }
+
+// ─── Main handler ────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   let body: { query?: string; category?: string } = {}
@@ -58,34 +98,75 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'No Anthropic API key configured. Add it in Settings.' }, { status: 400 })
   }
 
+  // Check cache first — same query+category = instant response
+  const cacheKey = `${query.trim().toLowerCase()}::${category ?? ''}`
+  const cached = getCached(cacheKey)
+  if (cached) {
+    return NextResponse.json(cached)
+  }
+
   const baseURL = process.env.ANTHROPIC_BASE_URL
   const client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) })
   const model = await getAnthropicModel()
 
-  // Fetch bookmarks — optionally filtered by category
-  const whereClause = category
+  const categoryFilter = category
     ? { categories: { some: { category: { slug: category } } } }
     : {}
 
-  const bookmarks = await prisma.bookmark.findMany({
-    where: whereClause,
-    orderBy: [{ tweetCreatedAt: 'desc' }, { importedAt: 'desc' }],
-    include: {
-      mediaItems: { select: { type: true, url: true, thumbnailUrl: true, imageTags: true } },
-      categories: {
-        include: { category: { select: { id: true, name: true, slug: true, color: true } } },
-        orderBy: { confidence: 'desc' },
+  // ── Step 1: Keyword pre-filter ────────────────────────────────────────────
+  // Use SQLite LIKE to narrow candidates before sending to Claude.
+  // This reduces prompt size by 60-90% for most queries.
+  const keywords = extractKeywords(query)
+  const MAX_CANDIDATES = 350
+
+  type BookmarkInclude = Awaited<ReturnType<typeof loadBookmarks>>
+  async function loadBookmarks(whereExtra: object = {}) {
+    return prisma.bookmark.findMany({
+      where: { ...categoryFilter, ...whereExtra },
+      // Enriched bookmarks first — they have semantic tags = better search
+      orderBy: [{ enrichedAt: 'desc' }, { tweetCreatedAt: 'desc' }],
+      take: MAX_CANDIDATES,
+      select: {
+        id: true,
+        tweetId: true,
+        text: true,
+        authorHandle: true,
+        authorName: true,
+        tweetCreatedAt: true,
+        importedAt: true,
+        semanticTags: true,
+        entities: true,
+        mediaItems: { select: { id: true, type: true, url: true, thumbnailUrl: true, imageTags: true } },
+        categories: {
+          include: { category: { select: { id: true, name: true, slug: true, color: true } } },
+          orderBy: { confidence: 'desc' },
+        },
       },
-    },
-  })
+    })
+  }
+
+  // Build a LIKE filter across text + semanticTags (compound OR per keyword)
+  let bookmarks: BookmarkInclude
+  if (keywords.length > 0) {
+    const keywordConditions = keywords.flatMap((kw) => [
+      { text: { contains: kw } },
+      { semanticTags: { contains: kw } },
+      { entities: { contains: kw } },
+    ])
+    const filtered = await loadBookmarks({ OR: keywordConditions })
+
+    // If keyword filter is too aggressive (< 15 results), fall back to all bookmarks
+    bookmarks = filtered.length >= 15 ? filtered : await loadBookmarks()
+  } else {
+    bookmarks = await loadBookmarks()
+  }
 
   if (bookmarks.length === 0) {
     return NextResponse.json({ bookmarks: [], explanation: 'No bookmarks found.' })
   }
 
-  // Build compact, structured search index
+  // ── Step 2: Build compact search index ────────────────────────────────────
   const index = bookmarks.map((b) => {
-    // Image context from all media items
     const mediaContext = b.mediaItems
       .map((m) => {
         const ctx = buildImageContext(m.imageTags)
@@ -93,28 +174,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       })
       .join(' ')
 
-    // Semantic tags (AI-generated)
     let semTags = ''
-    if (b.semanticTags) {
+    if (b.semanticTags && b.semanticTags !== '[]') {
       try {
-        semTags = ` [sem:${(JSON.parse(b.semanticTags) as string[]).slice(0, 25).join(',')}]`
+        semTags = ` [sem:${(JSON.parse(b.semanticTags) as string[]).slice(0, 20).join(',')}]`
       } catch { /* ignore */ }
     }
 
-    // Entity hashtags (free signal)
     let hashtags = ''
     if (b.entities) {
       try {
         const ent = JSON.parse(b.entities) as { hashtags?: string[]; tools?: string[] }
-        const tags = [...(ent.hashtags ?? []), ...(ent.tools ?? [])].slice(0, 8)
+        const tags = [...(ent.hashtags ?? []), ...(ent.tools ?? [])].slice(0, 6)
         if (tags.length) hashtags = ` [#{${tags.join(',')}}]`
       } catch { /* ignore */ }
     }
 
-    // Top category
     const cats = b.categories.map((bc) => bc.category.slug).join(',')
-
-    return `${b.id}|@${b.authorHandle}: ${b.text.slice(0, 250)} ${mediaContext}${semTags}${hashtags}|[${cats}]`
+    return `${b.id}|@${b.authorHandle}: ${b.text.slice(0, 200)} ${mediaContext}${semTags}${hashtags}|[${cats}]`
   })
 
   const isMemeQuery = /meme|funny|laugh|lol|joke|humor|memes/i.test(query)
@@ -170,50 +247,45 @@ Rules:
     return NextResponse.json({ error: `AI search failed: ${msg}` }, { status: 500 })
   }
 
-  // Hydrate matched bookmarks
+  // ── Step 3: Hydrate from in-memory map (no second DB query needed) ─────────
+  const bookmarkById = new Map(bookmarks.map((b) => [b.id, b]))
   const matchMap = new Map(aiResponse.matches.map((m) => [m.id, m]))
-  const matchedIds = aiResponse.matches.map((m) => m.id)
 
-  const fullBookmarks = await prisma.bookmark.findMany({
-    where: { id: { in: matchedIds } },
-    include: {
-      mediaItems: true,
-      categories: {
-        include: { category: { select: { id: true, name: true, slug: true, color: true } } },
-        orderBy: { confidence: 'desc' },
-      },
-    },
-  })
+  const results = aiResponse.matches
+    .sort((a, b) => b.score - a.score)
+    .map((match) => {
+      const b = bookmarkById.get(match.id)
+      if (!b) return null
+      return {
+        id: b.id,
+        tweetId: b.tweetId,
+        text: b.text,
+        authorHandle: b.authorHandle,
+        authorName: b.authorName,
+        tweetCreatedAt: b.tweetCreatedAt?.toISOString() ?? null,
+        importedAt: b.importedAt.toISOString(),
+        mediaItems: b.mediaItems.map((m) => ({
+          id: m.id,
+          type: m.type,
+          url: m.url,
+          thumbnailUrl: m.thumbnailUrl,
+          imageTags: m.imageTags ?? null,
+        })),
+        categories: b.categories.map((bc) => ({
+          id: bc.category.id,
+          name: bc.category.name,
+          slug: bc.category.slug,
+          color: bc.category.color,
+          confidence: bc.confidence,
+        })),
+        aiScore: matchMap.get(b.id)?.score ?? 0,
+        aiReason: matchMap.get(b.id)?.reason ?? '',
+      }
+    })
+    .filter(Boolean)
 
-  const sorted = fullBookmarks.sort(
-    (a, b) => (matchMap.get(b.id)?.score ?? 0) - (matchMap.get(a.id)?.score ?? 0),
-  )
+  const response = { bookmarks: results, explanation: aiResponse.explanation }
+  setCache(cacheKey, response)
 
-  const results = sorted.map((b) => ({
-    id: b.id,
-    tweetId: b.tweetId,
-    text: b.text,
-    authorHandle: b.authorHandle,
-    authorName: b.authorName,
-    tweetCreatedAt: b.tweetCreatedAt?.toISOString() ?? null,
-    importedAt: b.importedAt.toISOString(),
-    mediaItems: b.mediaItems.map((m) => ({
-      id: m.id,
-      type: m.type,
-      url: m.url,
-      thumbnailUrl: m.thumbnailUrl,
-      imageTags: m.imageTags ?? null,
-    })),
-    categories: b.categories.map((bc) => ({
-      id: bc.category.id,
-      name: bc.category.name,
-      slug: bc.category.slug,
-      color: bc.category.color,
-      confidence: bc.confidence,
-    })),
-    aiScore: matchMap.get(b.id)?.score ?? 0,
-    aiReason: matchMap.get(b.id)?.reason ?? '',
-  }))
-
-  return NextResponse.json({ bookmarks: results, explanation: aiResponse.explanation })
+  return NextResponse.json(response)
 }

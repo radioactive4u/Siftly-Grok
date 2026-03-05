@@ -49,25 +49,24 @@ export default function AISearchPage() {
     if (analyzing) return
     setAnalyzing(true)
     try {
-      // Run batches until done or 5 batches max per click
-      for (let i = 0; i < 5; i++) {
+      // Run batches until ALL images are processed (no cap)
+      while (true) {
         const res = await fetch('/api/analyze/images', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ batchSize: 20 }),
+          body: JSON.stringify({ batchSize: 50 }),
         })
         const data = (await res.json()) as { analyzed: number; remaining: number }
         setImageStats((prev) =>
-          prev ? { ...prev, tagged: prev.tagged + data.analyzed, remaining: data.remaining } : null,
+          prev ? { ...prev, tagged: prev.total - data.remaining, remaining: data.remaining } : null,
         )
         if (data.remaining === 0) break
       }
-      // Refresh final stats
+    } catch {
+      // silent — refresh stats on error
       const statsRes = await fetch('/api/analyze/images')
       const stats = (await statsRes.json()) as ImageStats
       setImageStats(stats)
-    } catch {
-      // silent
     } finally {
       setAnalyzing(false)
     }
