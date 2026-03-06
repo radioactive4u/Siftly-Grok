@@ -42,7 +42,7 @@ After the pipeline runs, you get:
 - **Filtered browsing** — grid or list view, filter by category, media type, and date
 - **Export tools** — download media, export as CSV / JSON / ZIP
 
-**Estimated cost: ~$1.50 to fully process 1,000 bookmarks with 600 images using Claude Haiku.**
+**100% free — powered by your existing X OAuth subscription. No API keys required.**
 
 ---
 
@@ -54,7 +54,7 @@ After the pipeline runs, you get:
 
 - Node.js 18+
 - npm
-- An [Anthropic API key](https://console.anthropic.com) *(required for AI features; importing and browsing work without one)*
+- An [Anthropic API key](https://console.anthropic.com) *(optional — AI features work via X OAuth for free; a key unlocks additional model options)*
 
 ### 1. Clone & Install
 
@@ -143,12 +143,12 @@ After importing, Siftly **automatically starts AI categorization**. You can also
 
 ### The 4-Stage Pipeline
 
-| Stage | What it does | Cost |
-|-------|-------------|------|
-| **Entity Extraction** | Mines hashtags, URLs, @mentions, and 80+ known tool/product names from stored tweet JSON | Free |
-| **Vision Analysis** | Analyzes every image, GIF, and video thumbnail with Claude's vision model — OCR text, objects, scene, mood, meme templates, 30–40 visual tags | ~$0.001/image |
-| **Semantic Tagging** | Generates 30–50 precise search tags per bookmark by combining tweet text + image context | ~$0.0005/bookmark |
-| **Categorization** | Assigns 1–3 categories per bookmark with confidence scores using all enriched data | ~$0.0001/bookmark |
+| Stage | What it does |
+|-------|-------------|
+| **Entity Extraction** | Mines hashtags, URLs, @mentions, and 80+ known tool/product names from stored tweet JSON |
+| **Vision Analysis** | Analyzes every image, GIF, and video thumbnail — OCR text, objects, scene, mood, meme templates, 30–40 visual tags |
+| **Semantic Tagging** | Generates 30–50 precise search tags per bookmark by combining tweet text + image context |
+| **Categorization** | Assigns 1–3 categories per bookmark with confidence scores using all enriched data |
 
 The pipeline is **incremental** — if interrupted, it picks up where it left off. Use **"Re-run everything (force all)"** to re-analyze bookmarks that were already processed.
 
@@ -272,7 +272,7 @@ siftly/
 ├── lib/
 │   ├── categorizer.ts        # AI categorization logic + default categories
 │   ├── vision-analyzer.ts    # Image analysis + semantic tagging
-│   ├── rawjson-extractor.ts  # Zero-cost entity extraction
+│   ├── rawjson-extractor.ts  # Entity extraction from raw tweet JSON
 │   ├── parser.ts             # Multi-format JSON parser
 │   ├── exporter.ts           # CSV, JSON, ZIP export
 │   └── db.ts                 # Prisma client singleton
@@ -351,7 +351,7 @@ The `description` field directly shapes how the AI classifies bookmarks. Be spec
 
 ### Adding Known Tools
 
-Add domain strings to `KNOWN_TOOL_DOMAINS` in `lib/rawjson-extractor.ts` to have the entity extractor automatically recognize links to those tools in tweet data — no API cost.
+Add domain strings to `KNOWN_TOOL_DOMAINS` in `lib/rawjson-extractor.ts` to have the entity extractor automatically recognize links to those tools in tweet data.
 
 ---
 
