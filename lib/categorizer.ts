@@ -1,8 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk'
 import prisma from '@/lib/db'
 import { buildImageContext } from '@/lib/image-context'
-import { resolveAnthropicClient, getCliAvailability, claudePrompt, modelNameToCliAlias } from '@/lib/claude-cli-auth'
-import { getAnthropicModel } from '@/lib/settings'
+import { resolveAnyClient, getCliAvailability, claudePrompt, modelNameToCliAlias, type AIClient } from '@/lib/claude-cli-auth'
+import { getAnthropicModel, getOpenAIModel } from '@/lib/settings'
+import { OpenAICompatClient } from '@/lib/openai-client'
 
 const BATCH_SIZE = 20
 
@@ -231,7 +232,7 @@ function parseCategorizationResponse(text: string, validSlugs: Set<string>): Cat
 
 export async function categorizeBatch(
   bookmarks: BookmarkForCategorization[],
-  client: Anthropic | null,
+  client: AIClient | null,
   categoryDescriptions: Record<string, string> = {},
   allSlugs: string[] = DEFAULT_SLUGS,
 ): Promise<CategorizationResult[]> {
@@ -261,17 +262,19 @@ export async function categorizeBatch(
     throw new Error('Claude CLI not available and no API key configured.')
   }
 
-  const model = await getAnthropicModel()
+  const model = client instanceof OpenAICompatClient
+    ? await getOpenAIModel()
+    : await getAnthropicModel()
   const message = await client.messages.create({
     model,
     max_tokens: 2048,
     messages: [{ role: 'user', content: prompt }],
   })
 
-  const textBlock = message.content.find((b) => b.type === 'text')
-  if (!textBlock || textBlock.type !== 'text') throw new Error('No text content in Claude response')
+  const textBlock = message.content.find((b: { type: string }) => b.type === 'text')
+  if (!textBlock || textBlock.type !== 'text') throw new Error('No text content in AI response')
 
-  return parseCategorizationResponse(textBlock.text, new Set(allSlugs))
+  return parseCategorizationResponse((textBlock as { type: 'text'; text: string }).text, new Set(allSlugs))
 }
 
 export async function writeCategoryResults(results: CategorizationResult[]): Promise<void> {
@@ -383,7 +386,7 @@ export async function categorizeAll(
 
   // Resolve auth once — avoids re-resolving inside every batch call
   const apiKeySetting = await prisma.setting.findUnique({ where: { key: 'anthropicApiKey' } })
-  const client = resolveAnthropicClient({ dbKey: apiKeySetting?.value })
+  const { client } = await resolveAnyClient({ dbKey: apiKeySetting?.value })
 
   // Load ALL categories (default + custom) for the prompt
   const dbCategories = await prisma.category.findMany({ select: { slug: true, name: true, description: true } })

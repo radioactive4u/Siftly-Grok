@@ -3,6 +3,10 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
 import Anthropic from '@anthropic-ai/sdk'
+import { OpenAICompatClient, resolveOpenAICompatClient } from '@/lib/openai-client'
+
+// Union type for any AI client the codebase uses
+export type AIClient = Anthropic | OpenAICompatClient
 
 // Re-export CLI utilities for text-based tasks
 export { claudePrompt, getCliAvailability, modelNameToCliAlias } from './claude-cli'
@@ -215,4 +219,31 @@ export function resolveAnthropicClient(options: {
   }
 
   throw new Error('No Anthropic API key found. Add your key in Settings, or log in with Claude CLI.')
+}
+
+/**
+ * Resolves ANY AI client — tries Anthropic first, then falls back to OpenAI/xAI.
+ * This is the preferred function for call sites that support both providers.
+ *
+ * Returns { client, provider } so callers can pick the right model name.
+ */
+export async function resolveAnyClient(options: {
+  overrideKey?: string
+  dbKey?: string
+  baseURL?: string
+} = {}): Promise<{ client: AIClient; provider: 'anthropic' | 'xai' | 'openai' }> {
+  // Try Anthropic first
+  try {
+    const client = resolveAnthropicClient(options)
+    return { client, provider: 'anthropic' }
+  } catch {
+    // Anthropic not available — try OpenAI/xAI
+  }
+
+  const openaiClient = await resolveOpenAICompatClient()
+  if (openaiClient) {
+    return { client: openaiClient, provider: openaiClient.provider }
+  }
+
+  throw new Error('No AI API key configured. Add an Anthropic or xAI/Grok key in Settings.')
 }

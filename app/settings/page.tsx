@@ -29,9 +29,13 @@ const ANTHROPIC_MODELS = [
 ]
 
 const OPENAI_MODELS = [
-  { value: 'gpt-4o-mini', label: 'GPT-4o Mini', description: 'Fast & Cheap' },
-  { value: 'gpt-4o', label: 'GPT-4o', description: 'Smart & Balanced' },
-  { value: 'gpt-4-turbo', label: 'GPT-4 Turbo', description: 'Powerful' },
+  { value: 'grok-3', label: 'Grok 3', description: 'Most Capable (xAI)' },
+  { value: 'grok-3-mini', label: 'Grok 3 Mini', description: 'Fast & Cheap (xAI)' },
+  { value: 'grok-2-vision', label: 'Grok 2 Vision', description: 'Vision Support (xAI)' },
+  { value: 'grok-2', label: 'Grok 2', description: 'Balanced (xAI)' },
+  { value: 'gpt-4o-mini', label: 'GPT-4o Mini', description: 'Fast & Cheap (OpenAI)' },
+  { value: 'gpt-4o', label: 'GPT-4o', description: 'Smart (OpenAI)' },
+  { value: 'gpt-4-turbo', label: 'GPT-4 Turbo', description: 'Powerful (OpenAI)' },
 ]
 
 interface Toast {
@@ -465,17 +469,18 @@ function ApiKeySection({ onToast }: { onToast: (t: Toast) => void }) {
         <div className="border-t border-zinc-800" />
         <div>
           <ApiKeyField
-            label="OpenAI — Alternative"
-            placeholder="sk-proj-..."
+            label="xAI (Grok) / OpenAI — Alternative"
+            placeholder="xai-... or sk-proj-..."
             fieldKey="openaiApiKey"
-            hint="Fallback if no Claude key is set."
-            docHref="https://platform.openai.com/api-keys"
+            hint="Supports xAI Grok and OpenAI. Auto-detects provider from key prefix."
+            docHref="https://console.x.ai"
             onToast={onToast}
+            testProvider="openai"
           />
           <ModelSelector
             models={OPENAI_MODELS}
             settingKey="openaiModel"
-            defaultValue="gpt-4o-mini"
+            defaultValue="grok-3-mini"
             onToast={onToast}
           />
         </div>

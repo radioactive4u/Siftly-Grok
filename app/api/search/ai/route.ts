@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import prisma from '@/lib/db'
 import { ftsSearch } from '@/lib/fts'
-import { resolveAnthropicClient } from '@/lib/claude-cli-auth'
-import { getAnthropicModel } from '@/lib/settings'
+import { resolveAnyClient, type AIClient } from '@/lib/claude-cli-auth'
+import { getAnthropicModel, getOpenAIModel } from '@/lib/settings'
 import { extractKeywords } from '@/lib/search-utils'
+import { OpenAICompatClient } from '@/lib/openai-client'
 
 // ─── Cache ────────────────────────────────────────────────────────────────────
 interface CacheEntry { results: unknown; expiresAt: number }
@@ -196,13 +197,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const cached = getCached(cacheKey)
   if (cached) return NextResponse.json(cached)
 
-  let client: Anthropic
+  let client: AIClient
   try {
-    client = resolveAnthropicClient({ dbKey: apiKey })
+    const resolved = await resolveAnyClient({ dbKey: apiKey })
+    client = resolved.client
   } catch {
-    return NextResponse.json({ error: 'No Anthropic API key configured. Add it in Settings or log in with Claude CLI.' }, { status: 400 })
+    return NextResponse.json({ error: 'No AI API key configured. Add it in Settings.' }, { status: 400 })
   }
-  const model = await getAnthropicModel()
+  const model = client instanceof OpenAICompatClient
+    ? await getOpenAIModel()
+    : await getAnthropicModel()
 
   const categoryFilter = category
     ? { categories: { some: { category: { slug: category } } } }

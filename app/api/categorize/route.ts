@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import prisma from '@/lib/db'
-import { resolveAnthropicClient } from '@/lib/claude-cli-auth'
+import { resolveAnyClient, type AIClient } from '@/lib/claude-cli-auth'
 import {
   seedDefaultCategories,
   categorizeBatch,
@@ -16,6 +16,8 @@ import {
   enrichBatchSemanticTags,
   BookmarkForEnrichment,
 } from '@/lib/vision-analyzer'
+import { getOpenAIModel } from '@/lib/settings'
+import { OpenAICompatClient } from '@/lib/openai-client'
 import { backfillEntities } from '@/lib/rawjson-extractor'
 import { rebuildFts } from '@/lib/fts'
 
@@ -150,11 +152,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const counts = { visionTagged: 0, entitiesExtracted: 0, enriched: 0, categorized: 0 }
 
     try {
-      let client: Anthropic
+      let client: AIClient
       try {
-        client = resolveAnthropicClient({ dbKey: dbApiKey })
+        const resolved = await resolveAnyClient({ dbKey: dbApiKey })
+        client = resolved.client
       } catch {
-        setState({ lastError: 'No Anthropic API key configured. Go to Settings to add one, or log in with Claude CLI.' })
+        setState({ lastError: 'No AI API key configured. Go to Settings to add an Anthropic or xAI/Grok key.' })
         console.error('No API key or CLI auth — skipping pipeline')
         return
       }
@@ -208,7 +211,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           const categoryDescriptions = Object.fromEntries(
             dbCategories.map((c) => [c.slug, c.description?.trim() || c.name]),
           )
-          const model = await getAnthropicModel()
+          const model = client instanceof OpenAICompatClient
+            ? await getOpenAIModel()
+            : await getAnthropicModel()
 
           // Shared categorization queue (JS single-threaded: splice is atomic vs async)
           const catPending: string[] = []

@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import Anthropic from '@anthropic-ai/sdk'
 import prisma from '@/lib/db'
 import { analyzeBatch } from '@/lib/vision-analyzer'
-import { resolveAnthropicClient } from '@/lib/claude-cli-auth'
+import { resolveAnyClient, type AIClient } from '@/lib/claude-cli-auth'
 
 // GET: returns progress stats
 export async function GET(): Promise<NextResponse> {
@@ -26,17 +25,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const setting = await prisma.setting.findUnique({ where: { key: 'anthropicApiKey' } })
   const dbKey = setting?.value?.trim()
 
-  let client
+  let client: AIClient
   try {
-    client = resolveAnthropicClient({ dbKey })
+    const resolved = await resolveAnyClient({ dbKey })
+    client = resolved.client
   } catch {
-    return NextResponse.json({ error: 'No API key configured. Add your key in Settings or sign in to Claude CLI.' }, { status: 400 })
+    return NextResponse.json({ error: 'No API key configured. Add your key in Settings.' }, { status: 400 })
   }
 
   return runAnalysis(client, batchSize)
 }
 
-async function runAnalysis(client: Anthropic, batchSize: number): Promise<NextResponse> {
+async function runAnalysis(client: AIClient, batchSize: number): Promise<NextResponse> {
   const untagged = await prisma.mediaItem.findMany({
     where: { imageTags: null, type: { in: ['photo', 'gif'] } },
     take: batchSize,

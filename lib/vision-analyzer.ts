@@ -1,8 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk'
 import prisma from '@/lib/db'
 import { buildImageContext } from '@/lib/image-context'
-import { getCliAvailability, claudePrompt, modelNameToCliAlias } from '@/lib/claude-cli-auth'
-import { getAnthropicModel } from '@/lib/settings'
+import { getCliAvailability, claudePrompt, modelNameToCliAlias, type AIClient } from '@/lib/claude-cli-auth'
+import { getAnthropicModel, getOpenAIModel } from '@/lib/settings'
+import { OpenAICompatClient } from '@/lib/openai-client'
 
 export { getAnthropicModel } from '@/lib/settings'
 
@@ -71,7 +72,7 @@ const CONCURRENCY = 12
 
 async function analyzeImageWithRetry(
   url: string,
-  client: Anthropic,
+  client: AIClient,
   model: string,
   attempt = 0,
 ): Promise<string> {
@@ -152,7 +153,7 @@ async function getCachedAnalysis(imageUrl: string, excludeId: string): Promise<s
 
 export async function analyzeItem(
   item: MediaItemForAnalysis,
-  client: Anthropic,
+  client: AIClient,
   model: string,
 ): Promise<number> {
   const imageUrl = item.type === 'video' ? (item.thumbnailUrl ?? item.url) : item.url
@@ -204,14 +205,16 @@ export async function runWithConcurrency<T>(
 
 export async function analyzeBatch(
   items: MediaItemForAnalysis[],
-  client: Anthropic,
+  client: AIClient,
   onProgress?: (delta: number) => void,
   shouldAbort?: () => boolean,
 ): Promise<number> {
   const analyzable = items.filter((m) => m.type === 'photo' || m.type === 'gif' || m.type === 'video')
   if (analyzable.length === 0) return 0
 
-  const model = await getAnthropicModel()
+  const model = client instanceof OpenAICompatClient
+    ? await getOpenAIModel()
+    : await getAnthropicModel()
 
   const tasks = analyzable.map((item) => async () => {
     if (shouldAbort?.()) return 0
@@ -224,7 +227,7 @@ export async function analyzeBatch(
   return results.reduce((sum, r) => sum + r, 0)
 }
 
-export async function analyzeUntaggedImages(client: Anthropic, limit = 10): Promise<number> {
+export async function analyzeUntaggedImages(client: AIClient, limit = 10): Promise<number> {
   const untagged = await prisma.mediaItem.findMany({
     where: { imageTags: null, type: { in: ['photo', 'gif', 'video'] } },
     take: limit,
@@ -238,7 +241,7 @@ export async function analyzeUntaggedImages(client: Anthropic, limit = 10): Prom
  * Analyze ALL untagged media items (no limit). Used during full AI categorization.
  */
 export async function analyzeAllUntagged(
-  client: Anthropic,
+  client: AIClient,
   onProgress?: (total: number) => void,
   shouldAbort?: () => boolean,
 ): Promise<number> {
@@ -338,7 +341,7 @@ ${JSON.stringify(items, null, 1)}`
 
 export async function enrichBatchSemanticTags(
   bookmarks: BookmarkForEnrichment[],
-  client: Anthropic | null,
+  client: AIClient | null,
 ): Promise<EnrichmentResult[]> {
   if (bookmarks.length === 0) return []
 
@@ -380,7 +383,9 @@ export async function enrichBatchSemanticTags(
     return []
   }
 
-  const model = await getAnthropicModel()
+  const model = client instanceof OpenAICompatClient
+    ? await getOpenAIModel()
+    : await getAnthropicModel()
   const ENRICH_RETRY_DELAYS = [2000, 5000]
 
   for (let attempt = 0; attempt <= ENRICH_RETRY_DELAYS.length; attempt++) {
@@ -390,7 +395,8 @@ export async function enrichBatchSemanticTags(
         max_tokens: 4096,
         messages: [{ role: 'user', content: prompt }],
       })
-      const text = msg.content.find((b) => b.type === 'text')?.text ?? ''
+      const textBlock = msg.content.find((b: { type: string }) => b.type === 'text')
+      const text = textBlock && 'text' in textBlock ? (textBlock as { type: 'text'; text: string }).text : ''
       const results = parseResponse(text)
       if (results.length > 0) return results
       console.warn(`[enrich] no JSON array in response (attempt ${attempt + 1})`)
@@ -411,7 +417,7 @@ export async function enrichBatchSemanticTags(
  * with ENRICH_CONCURRENCY parallel batches — 5-10x fewer API calls vs. per-bookmark.
  */
 export async function enrichAllBookmarks(
-  client: Anthropic,
+  client: AIClient,
   onProgress?: (total: number) => void,
   shouldAbort?: () => boolean,
 ): Promise<number> {
@@ -520,7 +526,7 @@ export async function enrichBookmarkSemanticTags(
   bookmarkId: string,
   tweetText: string,
   imageTags: string[],
-  client: Anthropic,
+  client: AIClient,
   entities?: BookmarkForEnrichment['entities'],
 ): Promise<string[]> {
   const results = await enrichBatchSemanticTags(

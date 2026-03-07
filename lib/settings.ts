@@ -14,3 +14,18 @@ export async function getAnthropicModel(): Promise<string> {
   _modelCacheExpiry = Date.now() + 5 * 60 * 1000
   return _cachedModel
 }
+
+// OpenAI/xAI model cache
+let _cachedOpenAIModel: string | null = null
+let _openAIModelExpiry = 0
+
+/**
+ * Get the configured OpenAI/xAI model from settings (cached for 5 minutes).
+ */
+export async function getOpenAIModel(): Promise<string> {
+  if (_cachedOpenAIModel && Date.now() < _openAIModelExpiry) return _cachedOpenAIModel
+  const setting = await prisma.setting.findUnique({ where: { key: 'openaiModel' } })
+  _cachedOpenAIModel = setting?.value ?? 'grok-3-mini'
+  _openAIModelExpiry = Date.now() + 5 * 60 * 1000
+  return _cachedOpenAIModel
+}

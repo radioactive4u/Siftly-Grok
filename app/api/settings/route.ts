@@ -14,6 +14,10 @@ const ALLOWED_ANTHROPIC_MODELS = [
 ] as const
 
 const ALLOWED_OPENAI_MODELS = [
+  'grok-3',
+  'grok-3-mini',
+  'grok-2-vision',
+  'grok-2',
   'gpt-4o-mini',
   'gpt-4o',
   'gpt-4-turbo',
@@ -34,7 +38,7 @@ export async function GET(): Promise<NextResponse> {
       hasAnthropicKey: anthropic !== null,
       hasOpenaiKey: openai !== null,
       anthropicModel: anthropicModel?.value ?? 'claude-opus-4-6',
-      openaiModel: openaiModel?.value ?? 'gpt-4o-mini',
+      openaiModel: openaiModel?.value ?? 'grok-3-mini',
     })
   } catch (err) {
     console.error('Settings GET error:', err)
@@ -114,9 +118,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Invalid openaiApiKey value' }, { status: 400 })
     }
     const trimmed = openaiApiKey.trim()
-    if (!trimmed.startsWith('sk-')) {
+    if (!trimmed.startsWith('sk-') && !trimmed.startsWith('xai-')) {
       return NextResponse.json(
-        { error: 'Invalid OpenAI key format. Keys start with "sk-".' },
+        { error: 'Invalid key format. Keys start with "sk-" (OpenAI) or "xai-" (Grok/xAI).' },
         { status: 400 }
       )
     }

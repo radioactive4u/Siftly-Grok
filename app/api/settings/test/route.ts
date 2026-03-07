@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
-import { resolveAnthropicClient, getCliAuthStatus } from '@/lib/claude-cli-auth'
+import { resolveAnthropicClient, getCliAuthStatus, resolveAnyClient } from '@/lib/claude-cli-auth'
+import { OpenAICompatClient } from '@/lib/openai-client'
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   let body: { provider?: string } = {}
@@ -39,6 +40,37 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       const friendly = msg.includes('401') || msg.includes('invalid_api_key')
+        ? 'Invalid API key'
+        : msg.includes('403')
+        ? 'Key does not have permission'
+        : msg.slice(0, 120)
+      return NextResponse.json({ working: false, error: friendly })
+    }
+  }
+
+  if (provider === 'openai') {
+    const setting = await prisma.setting.findUnique({ where: { key: 'openaiApiKey' } })
+    const key = setting?.value?.trim()
+    if (!key) {
+      return NextResponse.json({ working: false, error: 'No OpenAI/xAI key found. Add one in Settings.' })
+    }
+
+    try {
+      const isXai = key.startsWith('xai-')
+      const testClient = new OpenAICompatClient({
+        apiKey: key,
+        baseURL: isXai ? 'https://api.x.ai/v1' : undefined,
+        provider: isXai ? 'xai' : 'openai',
+      })
+      await testClient.messages.create({
+        model: isXai ? 'grok-3-mini' : 'gpt-4o-mini',
+        max_tokens: 5,
+        messages: [{ role: 'user', content: 'hi' }],
+      })
+      return NextResponse.json({ working: true, provider: isXai ? 'xai' : 'openai' })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      const friendly = msg.includes('401') || msg.includes('invalid')
         ? 'Invalid API key'
         : msg.includes('403')
         ? 'Key does not have permission'
