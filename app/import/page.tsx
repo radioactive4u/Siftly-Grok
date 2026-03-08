@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react'
 import Link from 'next/link'
-import { Upload, CheckCircle, ChevronRight, Loader2, Copy, Check, ExternalLink, Sparkles, Eye, Tag, Brain, Layers, StopCircle, RefreshCw, Clock, KeyRound, Trash2 } from 'lucide-react'
+import { Upload, CheckCircle, ChevronRight, Loader2, Copy, Check, ExternalLink, Sparkles, Eye, Tag, Brain, Layers, StopCircle, RefreshCw, Clock, KeyRound, Trash2, FolderSync } from 'lucide-react'
 import * as Progress from '@radix-ui/react-progress'
 
 type Step = 1 | 2 | 3
@@ -12,6 +12,9 @@ interface ImportResult {
   imported: number
   skipped: number
   total: number
+  folder?: string
+  categoriesCreated?: number
+  categoriesAssigned?: number
 }
 
 type Stage = 'vision' | 'entities' | 'enrichment' | 'categorize' | 'parallel' | null
@@ -57,7 +60,7 @@ const STAGE_INFO: Record<NonNullable<Stage>, { label: string; icon: React.ReactN
   parallel: {
     label: 'Processing all stages in parallel',
     icon: <Sparkles size={14} />,
-    desc: 'Vision, enrichment, and categorization running concurrently across 20 workers',
+    desc: 'Vision, enrichment, and categorization running concurrently across 8 workers (in chunks of 250)',
   },
 }
 
@@ -70,6 +73,10 @@ const BOOKMARKLET_SCRIPT = `(async function(){
   var isLikes=location.pathname.includes('/likes');
   var source=isLikes?'like':'bookmark';
   var label=isLikes?'likes':'bookmarks';
+  var pathParts=location.pathname.split('/');
+  var folderId=(pathParts[1]==='i'&&pathParts[2]==='bookmarks'&&pathParts[3]&&!isNaN(Number(pathParts[3])))?pathParts[3]:null;
+  var folderName=null;
+  if(folderId){var h2=document.querySelector('[data-testid="primaryColumn"] h2');if(h2&&h2.textContent)folderName=h2.textContent.trim();if(!folderName){var ti=document.title.indexOf(' / X');if(ti<0)ti=document.title.indexOf(' | X');if(ti>0)folderName=document.title.substring(0,ti).trim();}if(!folderName)folderName='Folder '+folderId;}
   function showToast(msg,bg){
     var t=document.createElement('div');t.innerHTML=msg;
     Object.assign(t.style,{position:'fixed',bottom:'24px',left:'50%',transform:'translateX(-50%)',
@@ -82,7 +89,7 @@ const BOOKMARKLET_SCRIPT = `(async function(){
   }
   var all=[],seen=new Set();
   var btn=document.createElement('button');
-  btn.textContent='Scroll, then Export 0 '+label+' \u2192';
+  btn.textContent='Scroll, then Export 0 '+label+(folderName?' ('+folderName+')':'')+' \u2192';
   Object.assign(btn.style,{position:'fixed',top:'12px',right:'12px',zIndex:'2147483647',
     padding:'10px 18px',background:'#4f46e5',color:'#fff',border:'none',borderRadius:'8px',
     cursor:'pointer',fontSize:'14px',fontWeight:'700',
@@ -109,8 +116,8 @@ const BOOKMARKLET_SCRIPT = `(async function(){
       avatar:usr.profile_image_url_https||'',timestamp:leg.created_at||'',
       text:leg.full_text||leg.text||'',media:media,
       hashtags:(leg.entities&&leg.entities.hashtags||[]).map(function(h){return h.text;}),
-      urls:(leg.entities&&leg.entities.urls||[]).map(function(u){return u.expanded_url;}).filter(Boolean)});
-    btn.textContent='Export '+all.length+' '+label+' \u2192';
+      urls:(leg.entities&&leg.entities.urls||[]).map(function(u){return u.expanded_url;}).filter(Boolean),folder:folderName});
+    btn.textContent='Export '+all.length+' '+label+(folderName?' ('+folderName+')':'')+' \u2192';
   }
   function processEntry(e){
     if(!e)return;
@@ -139,11 +146,11 @@ const BOOKMARKLET_SCRIPT = `(async function(){
     XMLHttpRequest.prototype.send=origSend;
     if(!all.length){showToast('\u26a0\ufe0f No '+label+' captured \u2014 scroll or use Auto-scroll first!','#92400e');return;}
     [btn,autoBtn].forEach(function(el){try{document.body.removeChild(el);}catch(e){}});
-    var blob=new Blob([JSON.stringify({bookmarks:all,source:source},null,2)],{type:'application/json'});
+    var blob=new Blob([JSON.stringify({bookmarks:all,source:source,folder:folderName},null,2)],{type:'application/json'});
     var url=URL.createObjectURL(blob);
-    var a=document.createElement('a');a.href=url;a.download=source+'s.json';a.click();
+    var a=document.createElement('a');a.href=url;a.download=(folderName?folderName.replace(/[^a-zA-Z0-9]/g,'_')+'_':'')+source+'s.json';a.click();
     setTimeout(function(){URL.revokeObjectURL(url);},1000);
-    showToast('\u2705 Downloaded '+all.length+' '+label+'! Upload to Siftly.','#14532d');
+    showToast('\u2705 Downloaded '+all.length+' '+label+(folderName?' from folder "'+folderName+'"':'')+'! Upload to Siftly.','#14532d');
   }
   btn.onclick=doExport;
   autoBtn.textContent='\u25b6 Auto-scroll';
@@ -218,6 +225,15 @@ const CONSOLE_SCRIPT = `(async function() {
   const source = isLikes ? 'like' : 'bookmark';
   const label = isLikes ? 'likes' : 'bookmarks';
   const all = [], seen = new Set();
+  const pathParts = location.pathname.split('/');
+  const folderId = (pathParts[1] === 'i' && pathParts[2] === 'bookmarks' && pathParts[3] && !isNaN(Number(pathParts[3]))) ? pathParts[3] : null;
+  let folderName = null;
+  if (folderId) {
+    const h2 = document.querySelector('[data-testid="primaryColumn"] h2');
+    if (h2?.textContent) folderName = h2.textContent.trim();
+    if (!folderName) { let ti = document.title.indexOf(' / X'); if (ti < 0) ti = document.title.indexOf(' | X'); if (ti > 0) folderName = document.title.substring(0, ti).trim(); }
+    if (!folderName) folderName = 'Folder ' + folderId;
+  }
   function addTweet(t) {
     if (!t?.rest_id || seen.has(t.rest_id)) return;
     seen.add(t.rest_id);
@@ -237,9 +253,10 @@ const CONSOLE_SCRIPT = `(async function() {
       id: t.rest_id, author: usr.name ?? 'Unknown', handle: '@' + (usr.screen_name ?? 'unknown'),
       timestamp: leg.created_at ?? '', text: leg.full_text ?? leg.text ?? '', media,
       hashtags: (leg.entities?.hashtags ?? []).map(h => h.text),
-      urls: (leg.entities?.urls ?? []).map(u => u.expanded_url).filter(Boolean)
+      urls: (leg.entities?.urls ?? []).map(u => u.expanded_url).filter(Boolean),
+      folder: folderName
     });
-    btn.textContent = \`Export \${all.length} \${label} →\`;
+    btn.textContent = \`Export \${all.length} \${label}\${folderName ? ' (' + folderName + ')' : ''} →\`;
   }
   function processEntry(e) {
     if (!e) return;
@@ -283,12 +300,12 @@ const CONSOLE_SCRIPT = `(async function() {
     XMLHttpRequest.prototype.send = origSend;
     [btn, autoBtn].forEach(el => { try { document.body.removeChild(el); } catch(e) {} });
     if (!all.length) { alert(\`No \${label} captured. Use Auto-scroll or scroll manually first.\`); return; }
-    const blob = new Blob([JSON.stringify({ bookmarks: all, source }, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ bookmarks: all, source, folder: folderName }, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = \`\${source}s.json\`; a.click();
+    a.href = url; a.download = \`\${folderName ? folderName.replace(/[^a-zA-Z0-9]/g, '_') + '_' : ''}\${source}s.json\`; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    console.log(\`✅ Downloaded \${all.length} \${label}!\`);
+    console.log(\`✅ Downloaded \${all.length} \${label}\${folderName ? ' from folder "' + folderName + '"' : ''}!\`);
   }
   btn.onclick = doExport;
   const autoBtn = document.createElement('button');
@@ -983,9 +1000,22 @@ function ImportingStep({ result }: {
       <div className="text-center">
         <p className="text-xl font-bold text-zinc-100">Import Complete</p>
         <p className="text-zinc-400 mt-1">
-          <span className="text-emerald-400 font-semibold">{result.imported}</span> imported,{' '}
-          <span className="text-zinc-500">{result.skipped} skipped</span> as duplicates
+          <span className="text-emerald-400 font-semibold">{result.imported}</span> new,{' '}
+          <span className="text-zinc-500">{result.skipped} already existed</span>
+          {result.folder && (
+            <span className="text-indigo-400"> &middot; folder &ldquo;{result.folder}&rdquo;</span>
+          )}
         </p>
+        {(result.categoriesCreated ?? 0) > 0 && (
+          <p className="text-indigo-400 text-sm mt-1">
+            Created {result.categoriesCreated} new {result.categoriesCreated === 1 ? 'category' : 'categories'}
+          </p>
+        )}
+        {(result.categoriesAssigned ?? 0) > 0 && (
+          <p className="text-zinc-500 text-sm mt-0.5">
+            {result.categoriesAssigned} bookmarks assigned to{result.folder ? ` "${result.folder}"` : ''} category
+          </p>
+        )}
       </div>
       <div className="flex items-center gap-2 text-indigo-400 text-sm">
         <Loader2 size={14} className="animate-spin" />
@@ -1262,6 +1292,8 @@ function CategorizeStep({ importedCount, force = false }: { importedCount: numbe
 function UncategorizedBanner({ onCategorize, onReprocess }: { onCategorize: () => void; onReprocess: () => void }) {
   const [totalBookmarks, setTotalBookmarks] = useState<number | null>(null)
   const [uncategorized, setUncategorized] = useState<number | null>(null)
+  const [folderSyncing, setFolderSyncing] = useState(false)
+  const [folderResult, setFolderResult] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
   useEffect(() => {
     fetch('/api/stats')
@@ -1277,6 +1309,30 @@ function UncategorizedBanner({ onCategorize, onReprocess }: { onCategorize: () =
         // Stats unavailable — banner stays hidden, not a critical failure
       })
   }, [])
+
+  async function handleFolderSync() {
+    setFolderSyncing(true)
+    setFolderResult(null)
+    try {
+      const res = await fetch('/api/import/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      const data = await res.json()
+      if (!res.ok) {
+        setFolderResult({ message: data.error || 'Failed to sync folders', type: 'error' })
+      } else if (data.folders === 0) {
+        setFolderResult({ message: 'No bookmark folders found on your X account', type: 'error' })
+      } else {
+        const details = (data.details as { name: string; assigned: number }[])?.map((d: { name: string; assigned: number }) => `${d.name} (${d.assigned})`).join(', ') || ''
+        setFolderResult({
+          message: `Synced ${data.folders} folders · ${data.categoriesCreated} categories created · ${data.bookmarksAssigned} bookmarks assigned${details ? ' — ' + details : ''}`,
+          type: 'success',
+        })
+      }
+    } catch (err) {
+      setFolderResult({ message: err instanceof Error ? err.message : 'Network error', type: 'error' })
+    } finally {
+      setFolderSyncing(false)
+    }
+  }
 
   if (!totalBookmarks || totalBookmarks === 0) return null
 
@@ -1297,6 +1353,32 @@ function UncategorizedBanner({ onCategorize, onReprocess }: { onCategorize: () =
             <Sparkles size={12} />
             Process
           </button>
+        </div>
+      )}
+      <div className="flex items-center justify-between gap-4 px-4 py-3.5 rounded-xl bg-amber-500/10 border border-amber-500/25">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <FolderSync size={15} className="text-amber-400 shrink-0" />
+          <p className="text-sm text-amber-300">
+            Import your X bookmark folder categories (requires saved X credentials)
+          </p>
+        </div>
+        <button
+          onClick={handleFolderSync}
+          disabled={folderSyncing}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold transition-colors shrink-0"
+        >
+          {folderSyncing ? <Loader2 size={12} className="animate-spin" /> : <FolderSync size={12} />}
+          {folderSyncing ? 'Syncing...' : 'Sync Folders'}
+        </button>
+      </div>
+      {folderResult && (
+        <div className={`flex items-start gap-2.5 px-4 py-3 rounded-xl text-sm border ${
+          folderResult.type === 'success'
+            ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
+            : 'bg-red-500/10 text-red-300 border-red-500/20'
+        }`}>
+          {folderResult.type === 'success' ? <CheckCircle size={14} className="shrink-0 mt-0.5" /> : <StopCircle size={14} className="shrink-0 mt-0.5" />}
+          <span>{folderResult.message}</span>
         </div>
       )}
       <div className="flex items-center justify-between gap-4 px-4 py-3.5 rounded-xl bg-zinc-800/60 border border-zinc-700/40">
@@ -1361,6 +1443,9 @@ export default function ImportPage() {
         imported: data.imported ?? data.count ?? 0,
         skipped: data.skipped ?? 0,
         total: (data.imported ?? data.count ?? 0) + (data.skipped ?? 0),
+        folder: data.folder ?? undefined,
+        categoriesCreated: data.categoriesCreated ?? 0,
+        categoriesAssigned: data.categoriesAssigned ?? 0,
       }
       setImportResult(result)
 

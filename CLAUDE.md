@@ -1,10 +1,12 @@
-# Siftly — Claude Code Guide
+# Siftly-Grok — AI Agent Guide
 
-Self-hosted Twitter/X bookmark manager with AI-powered categorization, search, and visualization.
+Windows fork of Siftly with xAI/Grok support, X bookmark folder sync, and large-library fixes.
+
+**This is a Windows-targeted project.** Use PowerShell commands, not bash. Avoid macOS/Linux assumptions.
 
 ## Quick Setup
 
-```bash
+```powershell
 # Install dependencies
 npm install
 
@@ -12,33 +14,37 @@ npm install
 npx prisma generate
 npx prisma db push
 
-# Start the dev server
-npx next dev
+# Start the dev server (clears stale Turbopack cache first)
+npm run dev:clean
 ```
 
 App runs at **http://localhost:3000**
 
-For a single command that does all of the above and opens the browser automatically:
-```bash
-./start.sh
+For a single command that does everything + opens the browser:
+```powershell
+.\start.ps1
 ```
 
-## AI Authentication — No API Key Needed
+## AI Providers
 
-If the user is signed into Claude Code CLI, **Siftly uses their Claude subscription automatically**. No API key configuration required.
+This fork supports **three AI providers** — xAI (Grok), Anthropic (Claude), and OpenAI. Configure in the Settings page.
 
-How it works:
-- `lib/claude-cli-auth.ts` reads the OAuth token from the macOS keychain (`Claude Code-credentials`)
-- Uses `authToken` + `anthropic-beta: oauth-2025-04-20` header in the Anthropic SDK
-- Falls back to: DB-saved API key → `ANTHROPIC_API_KEY` env var → local proxy
+How provider resolution works:
+- `lib/claude-cli-auth.ts` → `resolveAnyClient()` checks: Claude CLI → DB API key → env var → local proxy
+- `lib/openai-client.ts` → `OpenAICompatClient` wraps xAI/OpenAI APIs with Anthropic SDK interface
+- `lib/settings.ts` → cached lookups for `openaiApiKey`, `openaiModel`, `openaiBaseUrl`
 
-To verify it's working, hit: `GET /api/settings/cli-status`
+Provider is auto-detected from the API key prefix:
+- `xai-...` → xAI (Grok) — base URL: `https://api.x.ai/v1`
+- `sk-...` → OpenAI — base URL: `https://api.openai.com/v1`
+- `sk-ant-...` → Anthropic (Claude)
 
 ## Key Commands
 
-```bash
+```powershell
+npm run dev:clean     # Clear .next cache + start dev server
 npx next dev          # Start dev server (port 3000)
-npx tsc --noEmit      # Type check
+npx tsc --noEmit      # Type check (must pass with zero errors)
 npx prisma studio     # Database GUI
 npx prisma db push    # Apply schema changes to DB
 npm run build         # Production build
@@ -49,92 +55,133 @@ npm run build         # Production build
 ```
 app/
   api/
-    categorize/       # 4-stage AI pipeline (start/stop/status via SSE)
-    import/           # Bookmark JSON import + dedup
-    search/ai/        # FTS5 + Claude semantic search
+    categorize/       # 4-stage AI pipeline — 8 workers, chunks of 250, per-bookmark 45s timeout
+    import/           # Bookmark JSON import + batch dedup (500 at a time)
+      bookmarklet/    # Bookmarklet import with folder detection
+      folders/        # X bookmark folder sync via GraphQL API
+      live/           # Live X sync
+      twitter/        # Twitter-specific import
+    search/ai/        # FTS5 + AI semantic search
     settings/
-      cli-status/     # GET — returns Claude CLI auth status
-      test/           # POST — validates API key or CLI auth
-    analyze/images/   # Vision analysis progress + trigger
+      cli-status/     # GET — Claude CLI auth status
+      test/           # POST — validates any provider's API key
+    analyze/images/   # Vision analysis (30s timeout per image)
     bookmarks/        # CRUD + filtering
     categories/       # Category management
-    mindmap/          # Graph data
+    mindmap/          # Graph data for visualization
     stats/            # Dashboard counts
-  import/             # 3-step import UI
+    export/           # CSV, JSON, ZIP export
+  import/             # 3-step import UI with folder sync button
   mindmap/            # Interactive force graph
-  settings/           # API keys, model selection
+  settings/           # API keys, model selection, X credentials
   ai-search/          # Natural language search UI
   bookmarks/          # Browse + filter UI
-  categorize/         # Pipeline monitor
+  categorize/         # Pipeline monitor with progress
 
 lib/
-  claude-cli-auth.ts  # Claude CLI OAuth session (macOS keychain)
-  categorizer.ts      # AI categorization + default categories
-  vision-analyzer.ts  # Image vision + semantic tagging
+  claude-cli-auth.ts  # Unified AI client resolver (Claude CLI + SDK + xAI/OpenAI)
+  openai-client.ts    # xAI/OpenAI compatible client with Anthropic SDK adapter
+  categorizer.ts      # AI categorization + default categories (uses ALL DB categories)
+  vision-analyzer.ts  # Image vision + semantic tagging (with timeouts)
+  settings.ts         # Cached settings lookups (model, keys, base URL)
   fts.ts              # SQLite FTS5 full-text search
   rawjson-extractor.ts # Entity extraction from tweet JSON
-  parser.ts           # Multi-format bookmark JSON parser
+  parser.ts           # Multi-format bookmark JSON parser (with folder field)
   exporter.ts         # CSV / JSON / ZIP export
+  db.ts               # Prisma client singleton
 
 prisma/schema.prisma  # SQLite schema (Bookmark, Category, MediaItem, Setting, ImportJob)
+start.ps1             # Windows one-command launcher
+cli/siftly.ts         # CLI for direct DB access
 ```
 
 ## Tech Stack
 
-- **Next.js 16** (App Router, TypeScript)
-- **Prisma 7** + **SQLite** (local, zero setup, FTS5 built in)
-- **Anthropic SDK** — vision, tagging, categorization, search
+- **Next.js 16** (App Router, Turbopack, TypeScript)
+- **Prisma 7** + **SQLite** (local, zero setup, FTS5)
+- **Anthropic SDK** — Claude provider
+- **xAI API** — Grok provider (via OpenAI-compatible wrapper)
 - **@xyflow/react** — mindmap graph
 - **Tailwind CSS v4**
 
 ## Environment Variables
 
-Only `DATABASE_URL` is required. Everything else is optional:
+Only `DATABASE_URL` is required:
 
 ```env
 DATABASE_URL="file:./prisma/dev.db"       # required — set by default in .env
-ANTHROPIC_API_KEY=sk-ant-...              # optional if Claude CLI is signed in
+ANTHROPIC_API_KEY=sk-ant-...              # optional — can set in Settings UI instead
 ANTHROPIC_BASE_URL=http://localhost:8080  # optional — for local proxies
 ```
 
+xAI/OpenAI keys and X credentials are managed through the Settings UI and stored in the `Setting` table.
+
+## Fork-Specific Architecture
+
+### X Bookmark Folder Sync (`app/api/import/folders/route.ts`)
+
+POST endpoint that syncs X bookmark folders to Siftly categories via X's GraphQL API.
+
+- Uses query IDs: `BookmarkFoldersSlice` and `BookmarkFolderTimeline`
+- Authenticates with saved `x_auth_token` + `x_ct0` from the Settings/DB
+- Creates matching categories with AI-useful descriptions
+- Assigns bookmarks by tweet ID with `confidence: 1.0`
+- Rate limit handling: exponential backoff on 429 (30s → 60s → 120s)
+- Inter-folder delay: 3s. Inter-page delay: 2s.
+
+### Pipeline Chunking (`app/api/categorize/route.ts`)
+
+- `PIPELINE_WORKERS = 8` (down from upstream's 20)
+- `MEGA_CHUNK_SIZE = 250` with `CHUNK_DELAY_MS = 2000` between chunks
+- Per-bookmark wrapper: 45s timeout + 500ms abort polling
+- Vision: 30s timeout. Enrichment: 60s timeout.
+- Stop button checks `shouldAbort()` in loop + via `setInterval`
+
+### Category System
+
+`seedDefaultCategories()` only updates its own built-in defaults — never overwrites user-created or folder-synced categories.
+
+`categorizeAll()` and the pipeline both load ALL categories from the DB (including user-created and folder-synced) and pass them to the AI prompt.
+
+### Batch Dedup
+
+Import routes use `findMany` with `tweetId: { in: batch }` in chunks of 500 instead of sequential `findUnique` calls.
+
 ## CLI for AI Agents
 
-`cli/siftly.ts` provides direct database access without the Next.js server. Outputs JSON (pretty-printed on TTY, compact when piped). Must run from project root.
+`cli/siftly.ts` provides direct database access without the dev server:
 
-```bash
+```powershell
 npx tsx cli/siftly.ts stats                          # Library statistics
 npx tsx cli/siftly.ts categories                     # Categories with counts
 npx tsx cli/siftly.ts search "AI agents"             # FTS5 keyword search
 npx tsx cli/siftly.ts list --limit 5                 # Recent bookmarks
-npx tsx cli/siftly.ts list --source like --category ai-resources --sort oldest
+npx tsx cli/siftly.ts list --category hacking        # Filter by category
 npx tsx cli/siftly.ts show <id|tweetId>              # Full bookmark detail
-npm run siftly -- stats                              # Alternative via npm script
 ```
 
 ## Common Tasks
 
-### Run the AI pipeline manually
-POST to `/api/categorize` with `{}` body. Monitor progress via GET `/api/categorize` (returns SSE stream).
-
-### Add a new bookmark category
-Edit `DEFAULT_CATEGORIES` array in `lib/categorizer.ts`. Add name, slug, hex color, and description. The description text is passed verbatim to Claude — be specific.
+### Add a new default category
+Edit `DEFAULT_CATEGORIES` in `lib/categorizer.ts`. Add name, slug, color, and description. The description is passed verbatim to the AI — be specific.
 
 ### Add a known tool for entity extraction
 Append a domain string to `KNOWN_TOOL_DOMAINS` in `lib/rawjson-extractor.ts`.
 
 ### Test API auth
-```bash
-curl -X POST http://localhost:3000/api/settings/test \
-  -H "Content-Type: application/json" \
-  -d '{"provider":"anthropic"}'
+```powershell
+curl -X POST http://localhost:3000/api/settings/test -H "Content-Type: application/json" -d '{\"provider\":\"anthropic\"}'
 # Returns: {"working": true}
 ```
 
-### Check Claude CLI auth status
-```bash
-curl http://localhost:3000/api/settings/cli-status
-# Returns: {"available": true, "subscriptionType": "max", "expired": false}
+### Sync X bookmark folders
+```powershell
+curl -X POST http://localhost:3000/api/import/folders
+# Uses saved X credentials from DB. Returns folder sync results.
 ```
+
+### Run the AI pipeline
+POST to `/api/categorize` with `{}` body. Monitor via GET `/api/categorize` (SSE).
 
 ## Database
 
@@ -144,7 +191,13 @@ SQLite file at `prisma/dev.db`. Schema models:
 - `MediaItem` — images/videos/GIFs with AI visual tags
 - `BookmarkCategory` — bookmark↔category with confidence score (0–1)
 - `Category` — name, slug, color, AI description
-- `Setting` — key/value store (API keys, model choice)
+- `Setting` — key/value store (API keys, model choice, X credentials)
 - `ImportJob` — import file tracking
 
 After schema changes: `npx prisma db push`
+
+## Windows Notes
+
+- Turbopack persistent cache is disabled (`TURBOPACK_PERSISTENT_CACHE=0` in `next.config.ts`) to avoid RocksDB SST write failures
+- Clear `.next/` if routes return 404 after code changes: `npm run dev:clean`
+- Use `.\start.ps1` instead of `./start.sh`

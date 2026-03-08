@@ -14,6 +14,7 @@ export interface ParsedBookmark {
   urls: string[]
   media: ParsedMedia[]
   rawJson: string
+  folder?: string  // X bookmark folder name (from bookmarklet/console export)
 }
 
 interface TwitterMediaVariant {
@@ -158,6 +159,7 @@ function parseSingleTweet(tweet: RawTweet): ParsedBookmark | null {
     urls: extractUrls(tweet),
     media: extractMedia(tweet),
     rawJson: JSON.stringify(tweet),
+    folder: typeof tweet.folder === 'string' && tweet.folder ? tweet.folder : undefined,
   }
 }
 
@@ -213,6 +215,7 @@ interface ConsoleExportBookmark {
   media?: { type?: string; url?: string }[]
   hashtags?: string[]
   urls?: string[]
+  folder?: string
 }
 
 function isConsoleExportFormat(obj: unknown): obj is { bookmarks: ConsoleExportBookmark[] } {
@@ -248,6 +251,7 @@ function convertConsoleExportRow(row: ConsoleExportBookmark): RawTweet {
       media: mediaEntities.length > 0 ? mediaEntities : undefined,
     },
     extended_entities: mediaEntities.length > 0 ? { media: mediaEntities } : undefined,
+    folder: row.folder,
   }
 }
 

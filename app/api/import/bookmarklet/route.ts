@@ -64,7 +64,7 @@ function extractMedia(tweet: TweetResult) {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  let body: { tweets?: TweetResult[]; source?: string } = {}
+  let body: { tweets?: TweetResult[]; source?: string; folder?: string } = {}
   try {
     body = await request.json()
   } catch {
@@ -72,24 +72,67 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   const source = body.source === 'like' ? 'like' : 'bookmark'
+  const folderName = typeof body.folder === 'string' && body.folder.trim() ? body.folder.trim() : null
   const tweets = body.tweets ?? []
   if (!Array.isArray(tweets) || tweets.length === 0) {
     return NextResponse.json({ error: 'No tweets provided' }, { status: 400, headers: CORS })
   }
 
+  // Batch dedup: check which tweet IDs already exist
+  const tweetIds = tweets.map((t) => t.rest_id).filter(Boolean) as string[]
+  const existingMap = new Map<string, string>()
+  for (let i = 0; i < tweetIds.length; i += 500) {
+    const batch = tweetIds.slice(i, i + 500)
+    const existing = await prisma.bookmark.findMany({
+      where: { tweetId: { in: batch } },
+      select: { id: true, tweetId: true },
+    })
+    for (const b of existing) existingMap.set(b.tweetId, b.id)
+  }
+
+  // Create/find category for folder
+  let folderCategoryId: string | null = null
+  if (folderName) {
+    const slug = folderName.toLowerCase().trim().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+    if (slug) {
+      const existing = await prisma.category.findFirst({
+        where: { OR: [{ slug }, { name: folderName }] },
+        select: { id: true },
+      })
+      if (existing) {
+        folderCategoryId = existing.id
+      } else {
+        const COLORS = ['#8b5cf6','#06b6d4','#f59e0b','#10b981','#ec4899','#3b82f6','#f97316','#14b8a6','#a855f7','#ef4444']
+        const colorIdx = (await prisma.category.count()) % COLORS.length
+        const created = await prisma.category.create({
+          data: { name: folderName, slug, color: COLORS[colorIdx], description: `Imported from X bookmark folder: ${folderName}`, isAiGenerated: false },
+        })
+        folderCategoryId = created.id
+      }
+    }
+  }
+
   let imported = 0
   let skipped = 0
+  let categoryAssigned = 0
 
   for (const tweet of tweets) {
     if (!tweet.rest_id) continue
 
-    const exists = await prisma.bookmark.findUnique({
-      where: { tweetId: tweet.rest_id },
-      select: { id: true },
-    })
-
-    if (exists) {
+    const existingId = existingMap.get(tweet.rest_id)
+    if (existingId) {
       skipped++
+      // Re-import: assign folder category to existing bookmark
+      if (folderCategoryId) {
+        try {
+          await prisma.bookmarkCategory.upsert({
+            where: { bookmarkId_categoryId: { bookmarkId: existingId, categoryId: folderCategoryId } },
+            update: {},
+            create: { bookmarkId: existingId, categoryId: folderCategoryId, confidence: 1.0 },
+          })
+          categoryAssigned++
+        } catch { /* already assigned */ }
+      }
       continue
     }
 
@@ -121,8 +164,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       })
     }
 
+    // Assign folder category to new bookmark
+    if (folderCategoryId) {
+      await prisma.bookmarkCategory.create({
+        data: { bookmarkId: created.id, categoryId: folderCategoryId, confidence: 1.0 },
+      })
+      categoryAssigned++
+    }
+
     imported++
   }
 
-  return NextResponse.json({ imported, skipped }, { headers: CORS })
+  return NextResponse.json({ imported, skipped, folder: folderName, categoriesAssigned: categoryAssigned }, { headers: CORS })
 }

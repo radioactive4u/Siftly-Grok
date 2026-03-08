@@ -80,7 +80,8 @@ async function analyzeImageWithRetry(
   if (!img) return ''
 
   try {
-    const msg = await client.messages.create({
+    // Wrap API call in a 30s timeout to prevent hanging on stalled requests
+    const apiCall = client.messages.create({
       model,
       max_tokens: 700,
       messages: [
@@ -93,6 +94,10 @@ async function analyzeImageWithRetry(
         },
       ],
     })
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Vision API call timed out after 30s')), 30_000)
+    )
+    const msg = await Promise.race([apiCall, timeout])
     const raw = msg.content.find((b) => b.type === 'text')?.text?.trim() ?? ''
     if (!raw) return ''
 
@@ -390,11 +395,16 @@ export async function enrichBatchSemanticTags(
 
   for (let attempt = 0; attempt <= ENRICH_RETRY_DELAYS.length; attempt++) {
     try {
-      const msg = await client.messages.create({
+      // Wrap API call in a 60s timeout to prevent hanging on stalled requests
+      const apiCall = client.messages.create({
         model,
         max_tokens: 4096,
         messages: [{ role: 'user', content: prompt }],
       })
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Enrichment API call timed out after 60s')), 60_000)
+      )
+      const msg = await Promise.race([apiCall, timeout])
       const textBlock = msg.content.find((b: { type: string }) => b.type === 'text')
       const text = textBlock && 'text' in textBlock ? (textBlock as { type: 'text'; text: string }).text : ''
       const results = parseResponse(text)

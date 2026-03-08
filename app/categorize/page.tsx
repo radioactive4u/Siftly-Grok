@@ -48,7 +48,7 @@ const STAGE_INFO: Record<NonNullable<Stage>, { label: string; icon: React.ReactN
   parallel: {
     label: 'Processing all stages in parallel',
     icon: <Sparkles size={14} />,
-    desc: 'Vision, enrichment, and categorization running concurrently across 20 workers',
+    desc: 'Vision, enrichment, and categorization running concurrently across 8 workers (in chunks of 250)',
   },
 }
 

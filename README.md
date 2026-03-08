@@ -1,46 +1,112 @@
 <div align="center">
-  <img src="public/logo.svg" alt="Siftly" width="80" height="80" />
+  <img src="public/logo.svg" alt="Siftly-Grok" width="80" height="80" />
 
-  <h1>Siftly</h1>
+  <h1>Siftly-Grok</h1>
 
-  <p><strong>Self-hosted Twitter/X bookmark manager with AI-powered organization</strong></p>
+  <p><strong>Windows fork of <a href="https://github.com/viperrcrypto/Siftly">Siftly</a> with xAI/Grok support, X folder sync, and large-library fixes</strong></p>
 
-  <p>Import · Analyze · Categorize · Search · Explore</p>
+  <p>Import · Sync Folders · Categorize · Search · Explore</p>
 
   <p>
     <img src="https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js" alt="Next.js 16" />
     <img src="https://img.shields.io/badge/TypeScript-5-blue?style=flat-square&logo=typescript" alt="TypeScript" />
     <img src="https://img.shields.io/badge/SQLite-local-green?style=flat-square&logo=sqlite" alt="SQLite" />
-    <img src="https://img.shields.io/badge/Tailwind-v4-38bdf8?style=flat-square&logo=tailwindcss" alt="Tailwind CSS" />
+    <img src="https://img.shields.io/badge/xAI%20Grok-supported-orange?style=flat-square" alt="xAI Grok" />
+    <img src="https://img.shields.io/badge/platform-Windows-0078D6?style=flat-square&logo=windows" alt="Windows" />
     <img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" alt="MIT License" />
   </p>
 </div>
 
 ---
 
-## What is Siftly?
+## What is Siftly-Grok?
 
-Siftly turns your Twitter/X bookmarks into a **searchable, categorized, visual knowledge base** — running entirely on your machine. No cloud, no subscriptions, no browser extensions required. Everything stays local except the AI API calls you configure.
+A self-hosted Twitter/X bookmark manager that turns thousands of bookmarks into a **searchable, categorized, visual knowledge base** — running entirely on your machine.
 
-It runs a **4-stage AI pipeline** on your bookmarks:
+This is a fork of [viperrcrypto/Siftly](https://github.com/viperrcrypto/Siftly) that adds:
 
-```
-📥 Import (built-in bookmarklet or console script — no extensions needed)
-    ↓
-🏷️  Entity Extraction   — mines hashtags, URLs, mentions, and 100+ known tools from raw tweet data (free, zero API calls)
-    ↓
-👁️  Vision Analysis      — reads text, objects, and context from every image/GIF/video thumbnail (30–40 visual tags per image)
-    ↓
-🧠 Semantic Tagging     — generates 25–35 searchable tags per bookmark for AI-powered search
-    ↓
-📂 Categorization       — assigns each bookmark to 1–3 categories with confidence scores
-```
+- **xAI (Grok) as an AI provider** — use Grok 3, Grok 3 Mini, or Grok 2 Vision instead of Claude
+- **X bookmark folder sync** — import your X folder organization directly as categories
+- **Large library support** — chunked processing that handles 4,000+ bookmarks without crashing
+- **Windows-first** — Turbopack fixes, PowerShell launcher, Windows-tested throughout
 
-After the pipeline runs, you get:
-- **AI search** — find bookmarks by meaning, not just keywords (*"funny meme about crypto crashing"*)
-- **Interactive mindmap** — explore your entire bookmark graph visually
-- **Filtered browsing** — grid or list view, filter by category, media type, and date
-- **Export tools** — download media, export as CSV / JSON / ZIP
+Everything stays local except the AI API calls you configure. No cloud, no subscriptions, no browser extensions.
+
+---
+
+## Fork Changes from Upstream
+
+This section documents every significant change from the [original Siftly](https://github.com/viperrcrypto/Siftly).
+
+### xAI / Grok Provider
+
+The original Siftly only supports Anthropic (Claude). This fork adds full support for **xAI's Grok models** via the OpenAI-compatible API, plus standard OpenAI models.
+
+| Model | Best For |
+|-------|----------|
+| **Grok 3** | Full-power categorization and search |
+| **Grok 3 Mini** | Fast and cheap (default) |
+| **Grok 2 Vision** | Image analysis |
+| **Grok 2** | Text-only tasks |
+| **GPT-4o / GPT-4o Mini** | OpenAI alternative |
+
+Configure in Settings → paste your xAI key (`xai-...`) or OpenAI key (`sk-...`).
+
+### X Bookmark Folder Sync
+
+Siftly-Grok can pull your X bookmark folder structure and automatically create matching categories with bookmark assignments — **no manual categorization needed**.
+
+This uses X's GraphQL API with your saved auth credentials to:
+1. Fetch all your bookmark folders (e.g., "Hacking", "AI", "Health")
+2. Create a Siftly category for each folder
+3. Match bookmarks by tweet ID and assign them to the correct category
+
+Includes rate limit retry with exponential backoff (429 handling) and respects X API limits with delays between requests.
+
+### Large Library Fixes (4,000+ Bookmarks)
+
+The upstream pipeline crashes or hangs on large bookmark libraries. This fork fixes that:
+
+| Problem | Fix |
+|---------|-----|
+| Pipeline crashes processing 4,000+ bookmarks at once | **Mega-chunks of 250** with commit points between chunks |
+| Workers overwhelm the system | **8 concurrent workers** (down from 20) |
+| Pipeline hangs on deleted/broken tweets | **Per-bookmark 45s timeout** with automatic skip |
+| Vision API calls hang indefinitely | **30s timeout** on image analysis calls |
+| Enrichment API calls hang indefinitely | **60s timeout** on semantic tagging calls |
+| Stop button unresponsive during processing | **500ms abort polling** — stop takes effect within half a second |
+
+### Batch Dedup for Re-imports
+
+The upstream deduplication checks bookmarks one-by-one (`findUnique` in a loop). This fork uses **batch lookups** (`findMany` with `tweetId: { in: batch }`) in chunks of 500, making re-imports dramatically faster on large libraries.
+
+### Bookmarklet & Console Folder Detection
+
+The export bookmarklet and console script now detect which X bookmark folder you're viewing and include the folder name in the exported JSON. When imported, Siftly automatically creates a matching category and assigns the bookmarks.
+
+Detection uses: URL path → DOM heading → page title (fallback chain).
+
+### AI Categorization Uses All Categories
+
+The AI pipeline now uses **every category in the database** — both the built-in defaults and any user-created or folder-synced categories. The upstream only used hardcoded defaults.
+
+Folder-synced categories get AI-useful descriptions so the model knows when to assign bookmarks to them. Running the AI pipeline after folder sync will:
+- Keep your existing folder assignments (upsert, not replace)
+- Potentially assign additional categories where relevant
+- Add entity extraction, vision analysis, and semantic tagging
+
+### Windows Platform Fixes
+
+| Fix | Details |
+|-----|---------|
+| Turbopack RocksDB crash | `next.config.ts` disables persistent cache (`TURBOPACK_PERSISTENT_CACHE=0`) |
+| `start.ps1` launcher | PowerShell equivalent of `start.sh` — installs deps, generates Prisma, creates DB, clears cache, starts server, opens browser |
+| `dev:clean` script | `npm run dev:clean` clears `.next/` cache before starting (fixes stale route 404s) |
+| Stale route 404s | Turbopack on Windows caches old routes after code changes — clearing `.next/` resolves it |
+
+### Default Categories Auto-Seed
+
+Categories are automatically seeded on first API call, so the app works out of the box without running the AI pipeline first. `seedDefaultCategories()` only updates its own built-in categories — it never overwrites user-created or folder-synced category names/descriptions.
 
 ---
 
@@ -48,37 +114,29 @@ After the pipeline runs, you get:
 
 ### Prerequisites
 
-- [Node.js 18+](https://nodejs.org)
-- npm (comes with Node.js)
-
-**That's it.** If you have [Claude Code CLI](https://claude.ai/code) installed and signed in, AI features work automatically — no API key needed.
+| Requirement | Version |
+|---|---|
+| **OS** | Windows 10/11 (x64) |
+| **Node.js** | 22.x+ |
+| **npm** | 11.x+ |
+| **Disk** | ~500 MB for dependencies + database |
+| **Browser** | Chrome, Edge, or Firefox |
 
 ### Option A — One command (recommended)
 
-```bash
-git clone https://github.com/viperrcrypto/Siftly.git
-cd Siftly
-./start.sh
+```powershell
+git clone https://github.com/radioactive4u/Siftly-Grok.git
+cd Siftly-Grok
+.\start.ps1
 ```
 
-`start.sh` installs dependencies, sets up the database, checks for Claude CLI auth, and opens [http://localhost:3000](http://localhost:3000) automatically.
+`start.ps1` installs dependencies, generates the Prisma client, creates the database, clears stale cache, starts the dev server, and opens your browser.
 
-### Option B — Using Claude Code
+### Option B — Manual setup
 
-If you're using [Claude Code](https://claude.ai/code) to set up the project, it will read `CLAUDE.md` and know exactly how to get started. Just open the project folder:
-
-```bash
-git clone https://github.com/viperrcrypto/Siftly.git
-claude Siftly/
-```
-
-Claude Code will handle setup and start the app using your existing Claude subscription — no extra configuration needed.
-
-### Option C — Manual setup
-
-```bash
-git clone https://github.com/viperrcrypto/Siftly.git
-cd Siftly
+```powershell
+git clone https://github.com/radioactive4u/Siftly-Grok.git
+cd Siftly-Grok
 npm install
 npx prisma generate
 npx prisma db push
@@ -87,325 +145,322 @@ npx next dev
 
 Open [http://localhost:3000](http://localhost:3000)
 
----
+### Configure Your AI Provider
 
-## AI Authentication
-
-Siftly automatically detects the best available auth method — no configuration needed in the most common case.
-
-### Priority order
-
-| # | Method | How |
-|---|--------|-----|
-| 1 | **Claude Code CLI** *(zero config)* | Already signed in? Siftly reads your session from the macOS keychain automatically |
-| 2 | **API key in Settings** | Open Settings in the app and paste your key |
-| 3 | **`ANTHROPIC_API_KEY` env var** | Set in `.env.local` or your shell environment |
-| 4 | **Local proxy** | Set `ANTHROPIC_BASE_URL` to any Anthropic-compatible endpoint |
-
-### Claude Code CLI (no API key needed)
-
-If you use [Claude Code](https://claude.ai/code), you're already signed in. Siftly detects your session from the macOS keychain and uses your Claude subscription (Free/Pro/Max) automatically.
-
-The Settings page shows a green **"Claude CLI detected — no API key needed"** badge with your subscription tier when this is active.
-
-> **Note:** This works on macOS. On Linux/Windows, add an API key in Settings instead.
-
-### Getting an API key (if needed)
-
-1. Go to [console.anthropic.com](https://console.anthropic.com)
-2. Create a new API key
-3. Open Siftly → Settings → paste it in
-
-New accounts include $5 free credit — enough for thousands of bookmarks at Haiku pricing (~$0.00025/bookmark).
+1. Open **http://localhost:3000/settings**
+2. Paste your API key:
+   - **xAI (Grok):** `xai-...` — get one at [console.x.ai](https://console.x.ai)
+   - **Anthropic (Claude):** `sk-ant-...` — get one at [console.anthropic.com](https://console.anthropic.com)
+   - **OpenAI:** `sk-...` — get one at [platform.openai.com](https://platform.openai.com)
+3. Select a model (Grok 3 Mini is the default)
+4. Click **Test Connection** to verify
 
 ---
 
-## Importing Your Bookmarks
+## Recommended Workflow
 
-Siftly has **built-in import tools** — no browser extensions required. Go to the **Import** page and choose either method:
+The most effective way to use Siftly-Grok with a large bookmark library:
 
-### Method A — Bookmarklet *(Recommended)*
+### Step 1 — Import Your Bookmarks
 
-1. Go to **Import** in the Siftly sidebar
-2. Drag the **"Export X Bookmarks"** link to your browser's bookmark bar
-   *(or right-click the bookmark bar → Add Bookmark → paste the URL)*
-3. Go to [x.com/i/bookmarks](https://x.com/i/bookmarks) while logged in to X
-4. Click **"Export X Bookmarks"** in your bookmark bar — a purple button appears on the page
-5. Click **"▶ Auto-scroll"** — the tool scrolls through and captures all your bookmarks automatically
-6. When complete, click the purple **"Export N bookmarks"** button — `bookmarks.json` downloads
-7. Back in Siftly → **Import** → drop or upload the file
+Go to **Import** (`/import`) and follow the 3-step process:
 
-### Method B — Browser Console Script
+**Bookmarklet method (recommended):**
+1. Drag the **"Export X Bookmarks"** link to your bookmark bar
+2. Go to [x.com/i/bookmarks](https://x.com/i/bookmarks)
+3. Click the bookmarklet → click **"Auto-scroll"** → wait for it to finish
+4. Click **"Export N bookmarks"** → `bookmarks.json` downloads
+5. Upload the file in Siftly
 
-1. Go to [x.com/i/bookmarks](https://x.com/i/bookmarks) while logged in to X
-2. Open DevTools: press `F12` (Windows/Linux) or `⌘⌥J` (Mac), then go to the **Console** tab
-3. Copy the console script from the Siftly Import page, paste it into the console, and press Enter
-4. Click **"▶ Auto-scroll"** and wait for all bookmarks to be captured
-5. Click the export button — `bookmarks.json` downloads automatically
-6. Back in Siftly → **Import** → upload the file
+**Console script method:**
+1. Go to [x.com/i/bookmarks](https://x.com/i/bookmarks)
+2. Open DevTools (`F12`) → Console tab
+3. Paste the script from the Import page → press Enter
+4. Click **"Auto-scroll"** → export → upload in Siftly
 
-### Re-importing
+Re-importing is safe — duplicates are automatically skipped via batch dedup.
 
-Re-import anytime — Siftly automatically skips duplicates and only adds new bookmarks.
+> **Tip:** If you're viewing a specific X bookmark folder when you run the export, the folder name is detected and bookmarks are automatically assigned to a matching category on import.
 
----
+### Step 2 — Sync X Bookmark Folders (Optional but Recommended)
 
-## AI Categorization
+If you organize bookmarks into folders on X, sync them to Siftly as categories:
 
-**Categorization starts automatically as soon as you import.** You can also trigger it manually from:
+1. Save your X auth credentials in **Settings** → **Live Import** tab (auth_token + ct0 from browser cookies)
+2. Go to **Import** → click the **"Sync Folders"** button (amber, appears after import)
+3. Siftly fetches your folder structure from X, creates matching categories, and assigns bookmarks
 
-- The **Import** page (after upload)
-- The **Mindmap** page (when bookmarks are uncategorized)
-- The **Categorize** page in the sidebar
+This takes 2–4 minutes for ~20 folders. Rate limit retries are handled automatically.
 
-### The 4-Stage Pipeline
+**What you need (from browser DevTools → Application → Cookies → x.com):**
+- `auth_token` — your X session token
+- `ct0` — your X CSRF token
 
-| Stage | What it does |
-|-------|-------------|
-| **Entity Extraction** | Mines hashtags, URLs, @mentions, and 100+ known tool/product names from stored tweet JSON — free, zero API calls |
-| **Vision Analysis** | Analyzes every image, GIF, and video thumbnail — OCR text, objects, scene, mood, meme templates, 30–40 visual tags per image |
-| **Semantic Tagging** | Generates 25–35 precise search tags per bookmark by combining tweet text + image context. Also extracts sentiment, people, and company names. |
-| **Categorization** | Assigns 1–3 categories per bookmark with confidence scores using all enriched data |
+### Step 3 — Run the AI Pipeline (Optional)
 
-The pipeline is **incremental** — if interrupted, it picks up where it left off. Use **"Re-run everything (force all)"** to re-analyze bookmarks that were already processed.
+For richer search, semantic tags, and image analysis:
+
+1. Go to **Categorize** (`/categorize`)
+2. Click **"Start AI Pipeline"**
+3. The 4-stage pipeline runs:
+   - **Entity Extraction** — hashtags, URLs, tools (free, no API calls)
+   - **Vision Analysis** — image OCR, objects, scene tags
+   - **Semantic Tagging** — 25–35 searchable tags per bookmark
+   - **Categorization** — assigns 1–3 categories with confidence scores
+
+The pipeline uses all categories in the database — including your folder-synced ones. Your existing folder assignments are preserved; the AI may add supplementary category assignments.
+
+Processing runs in chunks of 250 with 8 workers. For 4,000 bookmarks, expect ~30–60 minutes depending on your AI provider's speed.
+
+### Step 4 — Browse, Search, and Explore
+
+- **Browse** (`/bookmarks`) — grid or list view, filter by category/media type
+- **AI Search** (`/ai-search`) — natural language queries like *"funny meme about crypto"*
+- **Mindmap** (`/mindmap`) — interactive graph of all categories and bookmarks
+- **Categories** (`/categories`) — manage and customize categories
+- **Export** — CSV, JSON, or ZIP with media files
 
 ---
 
 ## Features
 
-### 🔍 AI Search
+### AI Search
 
-Natural language queries across all bookmark data:
+Natural language search across all bookmark data — tweet text, image OCR, visual tags, semantic tags, and categories. Uses FTS5 full-text search with AI semantic reranking.
 
-- *"funny meme about crypto crashing"*
-- *"react hooks tutorial"*
-- *"bitcoin price chart"*
-- *"best AI coding tools"*
+### Mindmap
 
-Searches tweet text, image OCR, visual tags, semantic tags, and categories simultaneously using a full-text search index (FTS5) + Claude semantic reranking. Results are ranked by relevance with AI-generated explanations for each match.
+Interactive force-directed graph showing all bookmarks organized by category. Expand/collapse categories, click bookmarks to open on X, color-coded by category.
 
-### 🗺️ Mindmap
+### Browse & Filter
 
-Interactive force-directed graph showing all bookmarks organized by category:
+Grid (masonry) or list view with category, media type, and text filters. Sort by newest/oldest, paginated at 24 per page.
 
-- Expand/collapse any category to reveal its bookmarks
-- Click a bookmark node to open the original tweet on X
-- Color-coded legend by category
-- If bookmarks aren't categorized yet, an inline **AI Categorize** button starts the pipeline without leaving the page
+### Export
 
-### 📚 Browse & Filter
+- **CSV** — all fields, spreadsheet-compatible
+- **JSON** — full structured data
+- **ZIP** — bookmarks + media files with manifest
 
-- **Grid view** (masonry layout) or **List view**
-- Filter by category, media type (photo / video), or search text
-- Sort by newest or oldest
-- Pagination with 24 items per page
-- Active filter chips — removable individually or all at once
-- Hover any card to download media or jump to the original tweet
+### Command Palette
 
-### ⚙️ Categories
+`Ctrl+K` — search across all bookmarks from anywhere in the app.
 
-8 default categories pre-seeded with AI-readable descriptions:
+---
 
-| Category | Color |
-|----------|-------|
-| Funny Memes | Amber |
-| AI Resources | Violet |
-| Dev Tools | Cyan |
-| Design | Pink |
-| Finance & Crypto | Green |
-| Productivity | Orange |
-| News | Indigo |
-| General | Slate |
+## Troubleshooting
 
-Create custom categories with a name, color, and optional description. The description is passed directly to the AI during categorization — the more specific, the more accurate the results.
+### Server returns 500 on all routes
 
-### 📤 Export
+Delete the `.next` directory and restart:
 
-- **CSV** — spreadsheet-compatible with all fields
-- **JSON** — full structured data export
-- **ZIP** — exports a category's bookmarks + all media files with a `manifest.csv`
+```powershell
+Remove-Item -Recurse -Force .next
+npx next dev
+```
 
-### ⌨️ Command Palette
+Or use the clean start script:
 
-Press `Cmd+K` (Mac) or `Ctrl+K` (Windows/Linux) to search across all bookmarks from anywhere in the app.
+```powershell
+npm run dev:clean
+```
+
+### Turbopack cache errors (SST file write failures)
+
+The fix is baked into `next.config.ts`. If you still see errors, force Webpack:
+
+```powershell
+$env:NEXT_FORCE_WEBPACK="1"
+npx next dev
+```
+
+### Pipeline hangs or stops making progress
+
+The pipeline has per-bookmark timeouts (45s) and will skip problematic tweets automatically. If it truly stalls:
+
+1. Click **"Stop"** — takes effect within 500ms
+2. Wait a few seconds, then restart — the pipeline picks up where it left off
+
+### Folder sync rate limited (429)
+
+The sync automatically retries with exponential backoff (30s → 60s → 120s). If it still fails, wait a few minutes and try again. X rate limits reset on a rolling window.
+
+### Port 3000 already in use
+
+```powershell
+npx next dev --port 3001
+```
 
 ---
 
 ## Configuration
 
-All settings are manageable in the **Settings** page at `/settings` or via environment variables:
-
 | Setting | Env Var | Description |
 |---------|---------|-------------|
-| Anthropic API Key | `ANTHROPIC_API_KEY` | Optional if Claude CLI is signed in — otherwise required for AI features |
-| API Base URL | `ANTHROPIC_BASE_URL` | Custom endpoint for proxies or local Anthropic-compatible models |
-| AI Model | Settings page only | Haiku 4.5 (default, fastest/cheapest), Sonnet 4.6, Opus 4.6 |
-| OpenAI Key | Settings page only | Alternative provider if no Anthropic key is set |
-| Database | `DATABASE_URL` | SQLite file path (default: `file:./prisma/dev.db`) |
-
-### Custom API Endpoint
-
-Point Siftly at any Anthropic-compatible server:
-
-```env
-ANTHROPIC_BASE_URL=http://localhost:8080
-```
+| xAI / OpenAI API Key | Settings page | For Grok or GPT models |
+| Anthropic API Key | `ANTHROPIC_API_KEY` | For Claude models |
+| API Base URL | `ANTHROPIC_BASE_URL` | Custom endpoint for proxies |
+| AI Model | Settings page | Grok 3 Mini (default), Grok 3, GPT-4o, Claude, etc. |
+| Database | `DATABASE_URL` | SQLite path (default: `file:./prisma/dev.db`) |
+| X Auth Token | Settings page | For folder sync and live import |
+| X CT0 Token | Settings page | For folder sync and live import |
 
 ---
 
-## Architecture
+## Project Structure
 
 ```
-siftly/
-├── app/
-│   ├── api/
-│   │   ├── analyze/images/   # Batch image vision analysis (GET progress, POST run)
-│   │   ├── bookmarks/        # List, filter, paginate, delete
-│   │   │   └── [id]/categories/ # Per-bookmark category management
-│   │   ├── categories/       # Category CRUD
-│   │   │   └── [slug]/       # Individual category operations
-│   │   ├── categorize/       # 4-stage AI pipeline (start, status, stop)
-│   │   ├── export/           # CSV, JSON, ZIP export
-│   │   ├── import/           # JSON file import with dedup + auto-pipeline trigger
-│   │   │   ├── bookmarklet/  # Bookmarklet-specific import endpoint
-│   │   │   └── twitter/      # Twitter-specific import endpoint
-│   │   ├── link-preview/     # Server-side OG metadata scraper
-│   │   ├── media/            # Media proxy/download endpoint
-│   │   ├── mindmap/          # Graph nodes + edges for visualization
-│   │   ├── search/ai/        # Natural language semantic search (FTS5 + Claude)
-│   │   ├── settings/         # API key + model config
-│   │   │   ├── cli-status/   # Claude CLI auth detection endpoint
-│   │   │   └── test/         # API key validation endpoint
-│   │   └── stats/            # Dashboard stats
-│   ├── ai-search/            # AI search page
-│   ├── bookmarks/            # Browse, filter, paginate
-│   ├── categories/           # Category management
-│   │   └── [slug]/           # Category detail page
-│   ├── categorize/           # Pipeline monitor with live progress
-│   ├── import/               # 3-step import flow (instructions → upload → categorize)
-│   ├── mindmap/              # Interactive graph
-│   ├── settings/             # Configuration
-│   ├── twitter-import/       # Alternative Twitter import page
-│   └── page.tsx              # Dashboard
-│
-├── components/
-│   ├── mindmap/              # Mindmap canvas, nodes, edges
-│   │   ├── mindmap-canvas.tsx
-│   │   ├── category-node.tsx
-│   │   ├── tweet-node.tsx
-│   │   ├── root-node.tsx
-│   │   ├── chain-edge.tsx
-│   │   └── mindmap-context.ts
-│   ├── command-palette.tsx   # Cmd+K global search
-│   ├── nav.tsx               # Sidebar navigation
-│   └── theme-toggle.tsx      # Light/dark mode
-│
-├── lib/
-│   ├── categorizer.ts        # AI categorization logic + default categories
-│   ├── claude-cli-auth.ts    # Claude CLI OAuth session detection (macOS keychain)
-│   ├── vision-analyzer.ts    # Image analysis + batch semantic tagging
-│   ├── image-context.ts      # Shared image context builder
-│   ├── fts.ts                # SQLite FTS5 full-text search index
-│   ├── rawjson-extractor.ts  # Entity extraction from raw tweet JSON
-│   ├── parser.ts             # Multi-format JSON parser
-│   ├── exporter.ts           # CSV, JSON, ZIP export
-│   ├── types.ts              # Shared TypeScript types
-│   └── db.ts                 # Prisma client singleton
-│
-├── prisma/
-│   └── schema.prisma         # SQLite schema
-│
-├── start.sh                  # One-command launcher (install + DB setup + open browser)
-└── CLAUDE.md                 # Instructions for Claude Code AI assistant
+app/
+  api/
+    analyze/images/       # Batch image vision analysis
+    bookmarks/            # CRUD + filtering
+    categories/           # Category management
+    categorize/           # 4-stage AI pipeline (chunked, 8 workers)
+    export/               # CSV, JSON, ZIP
+    import/               # File import with batch dedup
+      bookmarklet/        # Bookmarklet import endpoint
+      folders/            # X bookmark folder sync (GraphQL API)
+      live/               # Live X sync
+      twitter/            # Twitter-specific import
+    link-preview/         # OG metadata scraper
+    media/                # Media proxy
+    mindmap/              # Graph data
+    search/ai/            # FTS5 + AI semantic search
+    settings/             # API keys, model config
+      cli-status/         # Claude CLI auth status
+      test/               # API key validation
+    stats/                # Dashboard counts
+
+lib/
+  categorizer.ts          # AI categorization + default categories
+  claude-cli-auth.ts      # Unified AI client resolver
+  openai-client.ts        # xAI/OpenAI compatible client wrapper
+  vision-analyzer.ts      # Image analysis with timeouts
+  fts.ts                  # SQLite FTS5 full-text search
+  rawjson-extractor.ts    # Entity extraction from tweet JSON
+  parser.ts               # Multi-format JSON parser (with folder field)
+  exporter.ts             # CSV / JSON / ZIP export
+  settings.ts             # Cached model/key lookups
+  db.ts                   # Prisma client singleton
+
+components/
+  mindmap/                # Mindmap canvas, nodes, edges
+  bookmark-card.tsx       # Bookmark display card
+  command-palette.tsx     # Ctrl+K global search
+  nav.tsx                 # Sidebar navigation
+
+prisma/schema.prisma      # SQLite schema
+start.ps1                 # Windows one-command launcher
+cli/siftly.ts             # CLI for direct DB access
 ```
 
 ### Database Schema
 
 ```
 Bookmark          — tweet text, author, date, raw JSON, semantic tags, enrichment metadata
-  ├── MediaItem   — images / videos / GIFs with AI-generated image tags
+  ├── MediaItem   — images / videos / GIFs with AI-generated visual tags
   └── BookmarkCategory — category assignments with confidence scores (0–1)
 
 Category          — name, slug, hex color, AI-readable description
-Setting           — key-value store (API keys, model preferences)
-ImportJob         — tracks import file status and progress
+Setting           — key-value store (API keys, model preferences, X credentials)
+ImportJob         — import file tracking
 ```
 
 ---
 
 ## Tech Stack
 
-| Technology | Version | Role |
-|------------|---------|------|
-| [Next.js](https://nextjs.org) | 16 | Full-stack framework (App Router) |
-| [TypeScript](https://www.typescriptlang.org) | 5 | Type safety throughout |
-| [Prisma](https://www.prisma.io) | 7 | ORM + migrations |
-| [SQLite](https://sqlite.org) | — | Local database — zero setup, includes FTS5 |
-| [Tailwind CSS](https://tailwindcss.com) | v4 | Styling |
-| [Anthropic SDK](https://anthropic.com) | — | Vision, semantic tagging, categorization, search |
-| [@xyflow/react](https://xyflow.com) | 12 | Interactive mindmap graph |
-| [Framer Motion](https://www.framer.com/motion/) | 12 | Animations |
-| [Radix UI](https://www.radix-ui.com) | — | Accessible UI primitives |
-| [JSZip](https://stuk.github.io/jszip/) | — | Category ZIP export |
-| [Lucide React](https://lucide.dev) | — | Icons |
+| Technology | Role |
+|------------|------|
+| [Next.js 16](https://nextjs.org) | Full-stack framework (App Router, Turbopack) |
+| [TypeScript 5](https://www.typescriptlang.org) | Type safety |
+| [Prisma 7](https://www.prisma.io) | ORM + migrations |
+| [SQLite](https://sqlite.org) | Local database with FTS5 |
+| [Tailwind CSS v4](https://tailwindcss.com) | Styling |
+| [Anthropic SDK](https://anthropic.com) | Claude AI provider |
+| [xAI API](https://x.ai) | Grok AI provider (OpenAI-compatible) |
+| [@xyflow/react](https://xyflow.com) | Interactive mindmap |
+| [Framer Motion](https://www.framer.com/motion/) | Animations |
+| [Radix UI](https://www.radix-ui.com) | Accessible UI primitives |
+
+---
+
+## CLI
+
+`cli/siftly.ts` provides direct database access without the dev server. Outputs JSON.
+
+```powershell
+npx tsx cli/siftly.ts stats                          # Library statistics
+npx tsx cli/siftly.ts categories                     # Categories with counts
+npx tsx cli/siftly.ts search "AI agents"             # FTS5 keyword search
+npx tsx cli/siftly.ts list --limit 5                 # Recent bookmarks
+npx tsx cli/siftly.ts list --category hacking        # Filter by category
+npx tsx cli/siftly.ts show <id|tweetId>              # Full bookmark detail
+```
 
 ---
 
 ## Development
 
-```bash
-# One-command start (installs, sets up DB, opens browser)
-./start.sh
+```powershell
+# One-command start
+.\start.ps1
 
-# Or manually:
+# Or manually
 npm install
 npx prisma generate
 npx prisma db push
 npx next dev
 
+# Clean start (clears stale cache)
+npm run dev:clean
+
 # Type check
 npx tsc --noEmit
 
-# Open database GUI
+# Database GUI
 npx prisma studio
 
-# Build for production
-npm run build && npm start
+# Production build
+npm run build; npm start
 ```
 
 ### Customizing Categories
 
-Edit `DEFAULT_CATEGORIES` in `lib/categorizer.ts`. Each entry needs:
+Edit `DEFAULT_CATEGORIES` in `lib/categorizer.ts`. The `description` field is passed verbatim to the AI — be specific about what content belongs in the category.
 
-```ts
-{
-  name: 'My Category',       // Display name
-  slug: 'my-category',       // URL-safe identifier (must be unique)
-  color: '#6366f1',          // Hex color shown in UI
-  description: '...',        // Natural language description — used verbatim in AI prompts
-}
-```
-
-The `description` field directly shapes how the AI classifies bookmarks. Be specific.
+You can also create categories through:
+- The Categories page in the UI
+- X bookmark folder sync (auto-created with AI-useful descriptions)
 
 ### Adding Known Tools
 
-Add domain strings to `KNOWN_TOOL_DOMAINS` in `lib/rawjson-extractor.ts` to have the entity extractor automatically recognize links to those tools in tweet data.
+Add domain strings to `KNOWN_TOOL_DOMAINS` in `lib/rawjson-extractor.ts` to have the entity extractor recognize links to those tools in tweet data.
+
+---
+
+## Upstream
+
+Original project: [github.com/viperrcrypto/Siftly](https://github.com/viperrcrypto/Siftly)
+
+The upstream README is preserved as [UPSTREAM-README.md](UPSTREAM-README.md).
+
+To pull upstream changes:
+
+```powershell
+git remote add upstream https://github.com/viperrcrypto/Siftly.git
+git fetch upstream
+git merge upstream/main
+```
 
 ---
 
 ## Privacy
 
-- All data is stored **locally** in a SQLite file on your machine
-- The only external calls are to the AI provider you configure (tweet text + image data)
-- No telemetry, no tracking, no accounts required
-- Your bookmarks never touch any third-party server except your configured AI endpoint
-
----
-
-## Support Development
-
-If Siftly saves you time, consider leaving a tip ☕
+- All data stored **locally** in a SQLite file
+- External calls only to your configured AI provider (tweet text + images)
+- X API calls only when you explicitly trigger folder sync (uses your own auth cookies)
+- No telemetry, no tracking, no accounts
 
 ---
 
@@ -416,5 +471,9 @@ MIT — see [LICENSE](LICENSE)
 ---
 
 <div align="center">
-  <p>Built by <a href="https://x.com/viperr">@viperr</a> · Self-hosted · No extensions · No cloud</p>
+  <p>
+    Fork by <a href="https://github.com/radioactive4u">@radioactive4u</a> · 
+    Original by <a href="https://x.com/viperr">@viperr</a> · 
+    Self-hosted · No extensions · No cloud
+  </p>
 </div>
