@@ -211,12 +211,28 @@ BOOKMARKS:
 ${JSON.stringify(tweetData, null, 1)}`
 }
 
+function sanitizeJson(raw: string): string {
+  // Strip single-line comments (// ...) that some models add
+  let s = raw.replace(/\/\/[^\n]*/g, '')
+  // Strip trailing commas before } or ] (common Grok/GPT issue)
+  s = s.replace(/,\s*([}\]])/g, '$1')
+  // Replace smart quotes with regular quotes
+  s = s.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'")
+  return s
+}
+
 function parseCategorizationResponse(text: string, validSlugs: Set<string>): CategorizationResult[] {
   const jsonMatch = text.match(/\[[\s\S]*\]/)
-  if (!jsonMatch) throw new Error('No JSON array found in Claude response')
+  if (!jsonMatch) throw new Error('No JSON array found in AI response')
 
-  const parsed: unknown = JSON.parse(jsonMatch[0])
-  if (!Array.isArray(parsed)) throw new Error('Claude response is not an array')
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(jsonMatch[0])
+  } catch {
+    // Try again after sanitizing common JSON issues from AI models
+    parsed = JSON.parse(sanitizeJson(jsonMatch[0]))
+  }
+  if (!Array.isArray(parsed)) throw new Error('AI response is not an array')
 
   return (parsed as Record<string, unknown>[]).map((item): CategorizationResult => {
     const tweetId = String(item.tweetId ?? '')
